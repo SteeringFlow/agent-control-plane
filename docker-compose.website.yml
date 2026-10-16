@@ -1,0 +1,37 @@
+# M8.1.3-A Root Cause B fix — website static deployment profile.
+#
+# Adds the website webroot + ACME webroot + website TLS mounts AND the :80
+# publish (ACME HTTP-01) to the nginx service. Pass as the LAST -f to
+# docker compose (after docker-compose.production.yml) so it merges into the
+# existing nginx service.
+#
+# Combination (append to the production command):
+#   docker compose -f docker-compose.cloud.yml -f docker-compose.yml \
+#     -f docker-compose.production.yml -f docker-compose.website.yml up -d --build
+#
+# Replaces the previous out-of-band host-local compose override, whose
+# responsibilities were: publish nginx :80 (ACME HTTP-01) + mount the website
+# webroot + mount acme-webroot. This file preserves ALL of them (and moves the
+# website cert OUT of the webroot) -> fixes B6.
+#
+# NOTE: once this file is in the -f set, the old out-of-band override is fully
+# superseded and may be retired.
+#
+# Host paths are configurable via environment variables (no production-specific
+# defaults; align with _deploy/deploy-website.sh naming):
+#   WEBSITE_DST          website artifact directory (git-archive output)
+#   WEBSITE_ACME_WEBROOT ACME HTTP-01 webroot shared with the certbot hooks
+#   WEBSITE_TLS_HOSTDIR  host directory holding the website fullchain/privkey
+services:
+  nginx:
+    ports:
+      # ACME HTTP-01 for BOTH steeringflow.com and app.steeringflow.com.
+      # (base docker-compose.yml publishes only :443.)
+      - "80:80"
+    volumes:
+      # Website artifact (git archive output) — NOT a git working copy (fixes B1/B5).
+      - ${WEBSITE_DST:-/var/www/website}:/usr/share/nginx/html/website:ro
+      # ACME HTTP-01 webroot for the ACP domain (certbot writes here).
+      - ${WEBSITE_ACME_WEBROOT:-/var/www/acme-webroot}:/var/www/certbot:ro
+      # Website TLS certs, moved OUT of the webroot (fixes B4).
+      - ${WEBSITE_TLS_HOSTDIR:-/var/www/tls/website}:/etc/nginx/website-tls:ro

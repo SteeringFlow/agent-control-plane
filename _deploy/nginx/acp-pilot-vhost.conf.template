@@ -1,0 +1,116 @@
+# ---------------------------------------------------------------------
+# ACP Pilot vhost template —— 14.2.3.C.3 冻结语义 / 16.1.3.3 版本化工件 /
+#                              M5.2 Cloud Product Entry boundary
+#
+# 公网行为契约（M5.2 演进：应用层 session 鉴权成为产品面唯一授权层）：
+#   GET /                                     → 302 /workspace.html（Cloud Product Entry）
+#   GET/POST /api/channels/{id}/wecom/webhook → 直通 ACP（无 auth_basic，不变）
+#   /health                                   → 404（不公开、不代理、不鉴权，不变）
+#   /docs /redoc /openapi.json                → Operational Surface（保留 BasicAuth）
+#   其余一切（product UI / /api/** 静态资源）  → 公开代理；**授权归应用层**
+#       —— Cloud 生产 ENVIRONMENT=production + AUTH_REQUIRED=true：
+#          未登录访问管理 API → 401（browser session 缺失，应用层裁决）；
+#          已登录（acp_session cookie）→ tenant-scoped 正常访问。
+#       nginx 不再对产品面挂 auth_basic：普通用户流程绝不依赖 BasicAuth，
+#       管理面守卫从「边缘 BasicAuth」收敛为「应用层 session 鉴权」（Gate 1 已验证）。
+#
+# location precedence（安全性核心，顺序冻结）：
+#   1. location = /health                               exact-match 最先命中 → return 404
+#   2. location = /                                     exact-match → return 302 /workspace.html
+#   3. location ~ ^/api/channels/[0-9]+/wecom/webhook$  regex → PUBLIC 直通
+#   4. location ~ ^/(docs|redoc|openapi\.json)$         regex → Operational BasicAuth
+#   5. location /                                       prefix 兜底 → 产品面公开代理
+#
+#   nginx 匹配规则保证：exact > regex > prefix。webhook 用 $ 锚定完整路径正则，
+#   因此 /api/channels/123/wecom/webhook/xxx、/api/channels/123/wecom/webhookevil
+#   均不命中 PUBLIC，回退兜底块（产品面公开代理，应用层仍按 session/验签裁决）。
+#
+# 占位符（全部由 _deploy/setup_nginx_pilot.sh 渲染；渲染后不得残留 __ACP_*）：
+#   __ACP_DOMAIN__          server_name（真实域名只在服务器侧注入）
+#   __ACP_UPSTREAM__        proxy_pass 目标（compose 内为 http://backend:8000）
+#   __ACP_TLS_CERT_PATH__   TLS fullchain 证书路径
+#   __ACP_TLS_KEY_PATH__    TLS 私钥路径（永不入 git）
+#   __ACP_HTPASSWD_PATH__   htpasswd 路径（runtime 生成，永不入 git；仅 ops surface）
+#   __ACP_ACME_WEBROOT__    ACME HTTP-01 webroot 目录
+# ---------------------------------------------------------------------
+
+server {
+    listen 80;
+    server_name __ACP_DOMAIN__;
+
+    # ACME HTTP-01 挑战（仅当运营者临时发布 :80 时生效；webroot 模式）
+    location ^~ /.well-known/acme-challenge/ {
+        root __ACP_ACME_WEBROOT__;
+        default_type "text/plain";
+    }
+
+    # 其余 HTTP 流量全部 301 → HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name __ACP_DOMAIN__;
+
+    ssl_certificate     __ACP_TLS_CERT_PATH__;
+    ssl_certificate_key __ACP_TLS_KEY_PATH__;
+
+    # TLS 基线（Pilot MVP，不做自动优化工具链）
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    # ---- 1. /health：internal-only（冻结语义：404，不代理、不鉴权） ----
+    # 健康验证归 Docker healthcheck（backend 容器内部直达 :8000），不经 nginx。
+    location = /health {
+        return 404;
+    }
+
+    # ---- 2. Cloud Product Entry（M5.2）：/ 永远 302 到 Auth + Workspace 入口 ----
+    # `/` = 产品入口；`/workspace.html` = Sign Up / Login + Workspace。
+    # 前端 index.html 为根入口（跳转 /workspace.html）；Agent Management 页为 /agents.html。
+    location = / {
+        return 302 /workspace.html;
+    }
+
+    # ---- 3. PUBLIC：WeCom webhook（$ 锚定精确正则；不得挂 auth_basic） ----
+    # WeCom 回调不携带 Operator 凭据；channel_id 为数字主键（channels.py: int）。
+    location ~ ^/api/channels/[0-9]+/wecom/webhook$ {
+        proxy_pass __ACP_UPSTREAM__;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 60s;
+    }
+
+    # ---- 4. OPERATIONAL：/docs /redoc /openapi.json（保留 BasicAuth） ----
+    # 运维/调试面与产品用户无关；继续受 Operator 凭据保护（M5.2 §七）。
+    location ~ ^/(docs|redoc|openapi\.json)$ {
+        auth_basic           "ACP Ops";
+        auth_basic_user_file __ACP_HTPASSWD_PATH__;
+
+        proxy_pass __ACP_UPSTREAM__;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 60s;
+    }
+
+    # ---- 5. PRODUCT 兜底：公开代理；授权归应用层（session 鉴权） ----
+    # 覆盖：/workspace.html、/connect-agent.html、/connect-channel.html、
+    #       /api/auth/**（signup/login/me/logout）、静态资源、
+    #       管理 UI 与管理 API（未登录 → 应用层 401；已登录 → tenant-scoped）。
+    # 绝不在此恢复 auth_basic——普通 Cloud 用户流程不得依赖 BasicAuth（M5.2 §六）。
+    location / {
+        proxy_pass __ACP_UPSTREAM__;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 300s;
+        client_max_body_size 10m;
+    }
+}

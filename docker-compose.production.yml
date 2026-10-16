@@ -1,0 +1,77 @@
+# SteeringFlow Cloud V0 —— Production Override
+#
+# !!! 本文件必须作为**最后一个** -f 传入，以覆盖 docker-compose.yml /
+#     docker-compose.cloud.yml 中 backend / postgres 的定义 !!!
+#
+# 组合命令：
+#   docker compose \
+#     -f docker-compose.cloud.yml \
+#     -f docker-compose.yml \
+#     -f docker-compose.production.yml \
+#     up -d --build
+#
+# 本文件不修改任何已冻结文件，只做「生产态覆盖」：
+#   1. backend 运行时使用 PostgreSQL **非-superuser** role（RLS 对 superuser 失效）
+#   2. ENVIRONMENT=production         → Browser Cookie secure=True
+#   3. AUTH_REQUIRED=true             → Cloud 多租户鉴权
+#   4. 启动前 alembic upgrade head（迁移角色 = admin，运行时角色 = app）
+#   5. backend 同时接入 acp_net（nginx）与 acp_cloud_net（postgres）
+#   6. backend 不 publish host port（沿用 expose:8000）
+#   7. postgres 不 publish 5432 到宿主机
+#   8. nginx 仍为唯一公网业务入口（来自 docker-compose.yml，不在本文件改动）
+#   9. admin/bootstrap role 与 backend runtime role 分离
+#
+# 凭据设计（经 .env / 宿主 shell 注入，.env 已 gitignore，绝不入 git）：
+#   POSTGRES_USER / POSTGRES_PASSWORD          → 初始化 & 迁移（admin，image 默认 superuser）
+#   POSTGRES_APP_USER / POSTGRES_APP_PASSWORD  → backend runtime（非-superuser）
+#
+# runtime 角色初始化走 postgres 官方 image 的 /docker-entrypoint-initdb.d 机制：
+#   _deploy/postgres/init/10_app_role.sh（仅全新 PGDATA 首次执行；幂等可手动补跑）
+#
+# 刻意未做：Redis / Kafka / Celery / Kubernetes / 新业务功能 / 架构重构。
+
+services:
+  postgres:
+    environment:
+      # runtime 角色凭据：仅供 initdb 脚本创建/更新该角色用（见 init 脚本）
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-acp_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD 必须设置}
+    # 取消 5432 host 发布：postgres 仅在 acp_cloud_net 内被 backend 可达
+    ports: !reset []
+    volumes:
+      # 一次性角色初始化（仅 fresh PGDATA 执行；既有 volume 不重跑）
+      - ./_deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # M5.2 deployment provenance：部署时经宿主 shell 注入当前 build commit——
+      #   GIT_SHA=$(git rev-parse HEAD) docker compose -f ... up -d --build
+      # （缺失时回退 "unknown"；/api/version 据此建立 runtime → commit 链）
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        # M7-AUI-10.8.12：镜像版本标签（runbook: IMAGE_VERSION=$(cat VERSION)）
+        IMAGE_VERSION: ${IMAGE_VERSION:-unknown}
+    environment:
+      APP_NAME: Agent Control Plane
+      ENVIRONMENT: production
+      AUTH_REQUIRED: "true"
+      # 运行时连接 = 非-superuser app role（RLS 第二层防线真正生效）
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_APP_USER:-acp_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD 必须设置}@postgres:5432/acp
+      # 迁移步骤专用（admin/bootstrap role）；仅用于启动前 alembic，uvicorn 不使用
+      MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-acp}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必须设置}@postgres:5432/acp
+    # 启动前：以 admin 角色执行 migration；运行时以 app 角色 exec uvicorn
+    # （$$ 转义为容器内 `$`；仅 alembic 一步的 DATABASE_URL 被临时指向 admin，
+    #   uvicorn 继承容器 DATABASE_URL = app role）
+    command:
+      - sh
+      - -c
+      - 'DATABASE_URL="$$MIGRATION_DATABASE_URL" alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000'
+    # 同时接入 acp_net（接 nginx）与 acp_cloud_net（接 postgres）
+    networks:
+      - acp_net
+      - acp_cloud_net
+
+# acp_net / acp_cloud_net 均由 docker-compose.yml / docker-compose.cloud.yml 声明，
+# 此处不重定义，避免与冻结文件冲突。

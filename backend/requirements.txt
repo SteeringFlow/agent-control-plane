@@ -1,0 +1,25 @@
+# Step 14.2.3.C.1 —— Runtime dependencies（确定性 pin）。
+#
+# 策略（14.1 拍板：MVP 用 pip + `==` pin，**不**引入 Poetry / uv / Pipenv 等新工具链）：
+# - 本文件 = **运行时直接依赖**（人维护的事实源），全部 `==` 锁定；
+# - pin 版本 = **完整测试套件（1467/1472 passed）实际验证过的组合**
+#   （注意：这些版本与历史上 `>=` 下界声明不同——旧下界从未约束过真实验证组合）；
+# - 传递依赖的完全锁定见 `requirements.lock.txt`（Docker 构建实际消费的文件，
+#   由 Linux 容器内 `pip freeze` 生成，见文件头注释）；
+# - dev / test 依赖（pytest / httpx）在 `requirements-dev.txt`，**绝不**进入运行时镜像。
+
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic-settings==2.4.0
+SQLAlchemy==2.0.52
+# 10.2.1 WeCom Inbound：回调验签（SHA1）与消息加解密（AES-CBC）的真实 wire 需求
+cryptography==50.0.0
+# 3B-2.2 WeCom Bot WebSocket transport：长连接客户端（同步 API，见
+# app/adapters/channels/wecom_bot.py）。此前仅作为 uvicorn[standard] 的传递依赖
+# 出现在 requirements.lock.txt；本步起为**直接运行时依赖**。
+websockets==17.1
+# Cloud-0.1.1-A：Cloud production engine（PostgreSQL）+ schema evolution（Alembic）。
+# SQLite 仍为 OSS/local development profile；psycopg 只在选用 postgresql+psycopg
+# URL 时被 SQLAlchemy 导入，不影响 SQLite 运行路径。
+alembic==1.19.1
+psycopg[binary]==3.3.4

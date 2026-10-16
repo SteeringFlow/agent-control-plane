@@ -1,0 +1,24 @@
+# Step 14.2.1：构建上下文 = 仓库根，排除与运行期无关且体积大的内容。
+# 说明：仅影响镜像内容，不影响任何应用语义。
+
+.git
+.github
+
+# Python 缓存 / 测试结果
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.venv/
+**/venv/
+**/.tox/
+
+# 本地数据库（*.db）——运行期由应用按需创建；持久化是 14.2.2 的事
+**/*.db
+**/*.sqlite3
+
+# 本地运行日志 / 产物
+**/*.log
+backend/artifacts/
+backend/uv*.out
+backend/uv*.err

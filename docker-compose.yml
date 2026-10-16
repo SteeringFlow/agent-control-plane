@@ -1,0 +1,104 @@
+# Step 16.1.3.3 —— Versioned Deployment Boundary（在 14.2.3.A 三项 invariant 之上收敛网络边界）
+#
+# I1 — No Reload：运行命令不含 `--reload`（不变）。
+# I2 — Persistent SQLite：SQLite 文件位于 named volume 内（不变）。
+# I3 → 16.1.3.3 演进：backend 不再 publish 任何 host port，改为 `expose: ["8000"]`
+#      ——只在 acp_net 内部可达；公网唯一入口是 nginx（HTTPS :443）。
+#
+# 网络拓扑：
+#   Internet → nginx :443（TLS 终止 + BasicAuth / webhook 直通）→ backend:8000（acp_net 内部）
+#   backend 不再有 127.0.0.1:8000 host binding；本机调试请走 nginx 或
+#   `docker compose exec backend ...`。
+#
+# nginx 的 TLS 证书 / htpasswd / 渲染后 vhost 由 `_deploy/setup_nginx_pilot.sh`
+# provisioning 生成（runtime/ 目录不入 git）；compose 只负责挂载点契约。
+#
+# 刻意未做：service mesh / mTLS / 防火墙编排 / K8s —— 保持 Docker Compose MVP。
+
+services:
+  backend:
+    # 构建上下文 = 仓库根（Dockerfile 与 docker-compose.yml 同级）
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # I1：显式运行命令（单一来源，可用 `docker compose config` 验证）
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+    # 运行期工作目录 = /app/backend（与本地 `cd backend` 等价；
+    # DATABASE_URL 的相对路径与 uvicorn 的 app.main:app 均以此为准）
+    working_dir: /app/backend
+
+    environment:
+      APP_NAME: Agent Control Plane
+      ENVIRONMENT: development
+      # I2：DB 落在工作目录下的 data/（该目录即 named volume 的挂载点），
+      # 绝对路径 = /app/backend/data/agent_control_plane.db。
+      # 注意：不能把卷挂到 /app/backend 本身——那会遮蔽镜像里的后端代码。
+      DATABASE_URL: sqlite:///./data/agent_control_plane.db
+
+    # 16.1.3.3：不再 publish host port；仅对 acp_net 内部暴露（nginx 可达，公网不可达）
+    expose:
+      - "8000"
+
+    networks:
+      - acp_net
+
+    # 14.3.1 P1：宿主机重启后自动拉起（Pilot 进程保底）。
+    # 只解决「进程在不在」，不解决数据——数据持久化由下面的 named volume 负责。
+    restart: unless-stopped
+
+    # I2：SQLite 持久化卷（挂载点 = SQLite 文件所在目录）
+    volumes:
+      - acp_data:/app/backend/data
+
+    # 14.2.3.B：最小 healthcheck —— 只打 /health（存活 + DB 可达性）。
+    # 用 Python 标准库而非 curl/wget：slim 镜像默认不带它们，可省一层镜像。
+    # 非 2xx（如 DB 不可达的 503）即判 unhealthy。
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  nginx:
+    # 16.1.3.3：唯一公网业务入口（HTTPS :443）。
+    # 公网面：webhook 直通（无 auth）；其余一切（Management/Observation/UI/docs）BasicAuth；
+    # /health 经 nginx 永不代理（404）。语义冻结见 vhost 模板头。
+    image: nginx:alpine
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    # 对外仅发布 HTTPS :443（ACME HTTP-01 需要 :80 时由运营者临时发布，见 README）
+    ports:
+      - "443:443"
+
+    networks:
+      - acp_net
+
+    restart: unless-stopped
+
+    volumes:
+      # 渲染后的 vhost（由 setup_nginx_pilot.sh 生成；不含占位符残留）
+      - ./_deploy/nginx/runtime/rendered:/etc/nginx/conf.d:ro
+      # TLS 证书/私钥（provisioning 产物，绝不入 git）
+      - ./_deploy/nginx/runtime/tls:/etc/nginx/acp-tls:ro
+      # htpasswd（runtime 生成，绝不入 git）
+      - ./_deploy/nginx/runtime/auth:/etc/nginx/acp-auth:ro
+
+# 专用内部网络：backend 与 nginx 之间；backend 不经任何 host port 出网暴露
+networks:
+  acp_net:
+
+# named volume：由 Docker 管理，独立于容器生命周期
+volumes:
+  acp_data:

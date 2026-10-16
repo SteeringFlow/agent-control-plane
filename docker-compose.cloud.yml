@@ -1,0 +1,74 @@
+# Cloud-0.1.1-A —— Cloud PostgreSQL deployment profile。
+#
+# 与 OSS `docker-compose.yml`（SQLite profile）**并存且互不影响**：
+#   - OSS:   docker compose up backend
+#             （SQLite，local development；schema 由 init_database 的
+#              sqlite-only create_all 处理）
+#   - Cloud: docker compose -f docker-compose.cloud.yml up -d --build
+#             （PostgreSQL；schema 由 `alembic upgrade head` 管理——绝不 create_all）
+#
+# backend 启动前先执行 `alembic upgrade head`：schema 归 migration（A8）。OLS
+# compose 的 network / volume / healthcheck 语义保持不变，本文件是**新增 profile**。
+#
+# 刻意未做（留给后续 Step）：tenant_id / RLS / nginx 公网入口 / 浏览器认证 /
+# webhook tenant routing —— 本 profile 只解决「PostgreSQL + Alembic」持久化地基。
+#
+# 凭据说明：POSTGRES_USER / POSTGRES_PASSWORD 经环境变量注入
+# （${POSTGRES_USER:-acp} 等默认值仅在本地未提供时生效）。.env 已被 gitignore，
+# 决不可提交；生产部署经宿主 shell / 项目根 .env 注入真实口令
+# （见 Credential Boundary 纪律）。
+#
+# M8.4-B（F4 fail-closed，自部署线 00f9b76 语义移植）：POSTGRES_PASSWORD 改为
+# 必填（:?），不再回退弱默认；POSTGRES_USER 保持非敏感默认。
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: acp
+      POSTGRES_USER: ${POSTGRES_USER:-acp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    # 本地验证需要从宿主机直连（PG regression）；生产 profile 可移除 host 发布。
+    ports:
+      - "5432:5432"
+    volumes:
+      - acp_pgdata:/var/lib/postgresql/data
+    networks:
+      - acp_cloud_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-acp} -d acp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app/backend
+    environment:
+      APP_NAME: Agent Control Plane
+      ENVIRONMENT: development
+      # Cloud production engine = PostgreSQL（psycopg3 driver）。
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-acp}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/acp
+    # schema 由 Alembic 管理；应用启动前置 migration（A8：不使用 create_all）。
+    command:
+      - sh
+      - -c
+      - "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - acp_cloud_net
+    restart: unless-stopped
+
+networks:
+  acp_cloud_net:
+
+volumes:
+  acp_pgdata:

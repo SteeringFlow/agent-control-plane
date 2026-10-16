@@ -1,0 +1,71 @@
+# Dockerfile.oss —— 初始 OSS 无前端构建变体（A1：初始 OSS 不含 frontend/）。
+#
+# 与 Cloud `Dockerfile` 的**唯一**差异：不执行 `COPY frontend/ /app/frontend/`。
+# 依据：docs/strategy/oss-vs-cloud-boundary.md §E（A1）——初始 OSS 快照排除
+# frontend/，且 backend/app/main.py 的静态挂载已改为条件式
+#（`if FRONTEND_DIR.is_dir():`）：目录缺失时后端照常启动，API/health 完全可用，
+# 绝不伪造占位 UI（B1）。
+#
+# 维护纪律（防漂移）：本文件必须与 `Dockerfile` 保持除 frontend COPY 外逐行一致；
+# 修改 Cloud Dockerfile 时同步本文件。镜像内容契约（/app = repo root 布局、
+# requirements.lock.txt 依赖锁定、GIT_SHA/IMAGE_VERSION provenance、无 --reload）
+# 两者完全相同。
+#
+# 构建（无 frontend/ 的上下文，如 OSS 导出树）：
+#   docker build -f Dockerfile.oss -t steeringflow-acp-oss:<tag> .
+# （上下文应来自 git archive / 干净导出树——与 Cloud Dockerfile 的构建纪律一致，
+#   见 _deploy runbook 与 10.8.11 §D；注意 runbook 本身不入 OSS。）
+#
+# Cloud 构建：继续使用根 `Dockerfile` + 既有 compose 文件（dockerfile: Dockerfile），
+# 行为不变。
+
+FROM python:3.14-slim
+
+# 构建期工作目录 = 容器布局的 "repo root"
+WORKDIR /app
+
+# 依赖预装（构建期完成，不再是启动期 pip install）。
+# 14.2.3.C.1：消费**完整锁定集** `requirements.lock.txt`（全部 `==`，Linux 容器
+# 内 `pip freeze` 生成）——保证每次构建得到同一运行时依赖集。
+# 人维护的事实源是 `requirements.txt`（直接依赖）；dev 依赖（pytest/httpx）
+# 在 `requirements-dev.txt`，**绝不**进入运行时镜像。
+COPY backend/requirements.lock.txt /app/backend/requirements.lock.txt
+RUN pip install --no-cache-dir -r /app/backend/requirements.lock.txt
+
+# 后端代码（含 app/）。注意：与 Cloud Dockerfile 的唯一差异在此——
+# 不 COPY frontend/（A1）；main.py 的条件挂载使缺省目录合法。
+COPY backend/ /app/backend/
+
+# ---------------------------------------------------------------------
+# M5.2 —— Deployment Provenance（Cloud runtime → version + commit）：
+#   * VERSION 文件随镜像进入 /app/VERSION（/api/version 的 version 事实源；
+#     与 main.py 的 FRONTEND_DIR 同一「/app = repo root」布局契约）；
+#   * GIT_SHA 构建期注入（--build-arg GIT_SHA=$(git rev-parse HEAD)），
+#     转为 runtime ENV 供 /api/version 读取；缺失时回退 "unknown"。
+#     绝不在运行期读取 git history（容器内无 .git）。
+# ---------------------------------------------------------------------
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+COPY VERSION /app/VERSION
+
+# ---------------------------------------------------------------------
+# M7-AUI-10.8.12 —— OCI 镜像身份标签（构建来源可追溯）：
+#   * revision ← GIT_SHA build-arg（与 /api/version 的 commit 字段同源）；
+#   * version  ← IMAGE_VERSION build-arg（部署 runbook 以 VERSION 文件内容注入：
+#     IMAGE_VERSION=$(cat VERSION)；缺失时回退 "unknown"）。
+#   注意：仅 GIT_SHA 不足以证明镜像内容与该提交一致——构建上下文必须来自
+#   git archive / 干净快照目录。
+# ---------------------------------------------------------------------
+ARG IMAGE_VERSION=unknown
+LABEL org.opencontainers.image.revision=${GIT_SHA} \
+      org.opencontainers.image.version=${IMAGE_VERSION}
+
+# 运行期工作目录：uvicorn 以 app.main:app 启动，等价于本地在 backend/ 下执行
+WORKDIR /app/backend
+
+EXPOSE 8000
+
+# 14.2.3.A（I1）：**无 --reload**。ProductionDriver 是 resident 生命周期组件，
+# 挂在应用 lifespan；reload 的 monitor + worker 进程模型会让 resident 组件的
+# 生命周期被反复打断/重建，因此不作为 Pilot 运行方式。
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,10 @@
+# Step 14.2.3.C.1 —— dev / test dependencies（含运行时）。
+#
+# 本文件供本地开发与 pytest 使用；Docker 运行时镜像**只装**运行时锁定集
+# （Dockerfile 消费 requirements.lock.txt），本文件绝不进入镜像。
+
+-r requirements.txt
+
+pytest==8.3.4
+# TestClient / API 测试的 HTTP 客户端（11.x 起 Management API 测试依赖）
+httpx==0.27.2

@@ -1,0 +1,47 @@
+# Step 14.2.3.C.1 —— Runtime dependency **lock**（Docker 构建实际消费的文件）。
+#
+# 本文件由 Linux 容器（python:3.14-slim + requirements.txt）内
+# `pip freeze --disable-pip-version-check` 生成：**完整传递依赖、全部 `==`**，
+# 即同一 requirements.txt 在目标平台上的确定性解析结果。
+#
+# 再生成流程（工具无变化，仍是 pip）：
+#   1. 修改 backend/requirements.txt（直接依赖，`==` pin）；
+#   2. docker compose build && docker compose up -d
+#   3. docker compose exec backend pip freeze --disable-pip-version-check
+#      → 整体替换本文件内容；
+#   4. docker compose down && docker compose up -d --build
+#      → 容器内 pip freeze 与本文件 diff 必须为空。
+#
+# 纪律：运行时镜像只消费本文件；本地 dev/test 依赖见 requirements-dev.txt
+# （pytest / httpx 不在本锁定集内，绝不进入镜像）。
+# 平台注意：uvloop 为 Linux-only（uvicorn[standard] 在 Windows 不安装），
+# 因此本锁定文件只保证 Linux 容器内的确定性——这正是 Pilot 的目标平台。
+alembic==1.19.1
+annotated-types==0.8.0
+anyio==4.15.1
+cffi==2.1.1
+click==8.5.0
+cryptography==50.0.0
+fastapi==0.115.0
+greenlet==3.5.5
+h11==0.16.0
+httptools==0.8.0
+idna==3.19
+Mako==1.4.1
+MarkupSafe==3.0.3
+psycopg==3.3.4
+psycopg-binary==3.3.4
+pycparser==3.0
+pydantic==2.13.5
+pydantic-settings==2.4.0
+pydantic_core==2.46.5
+python-dotenv==1.2.3
+PyYAML==6.0.3
+SQLAlchemy==2.0.52
+starlette==0.38.6
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.30.6
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.1

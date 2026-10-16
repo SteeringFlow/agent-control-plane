@@ -1,0 +1,14 @@
+# 16.1.3.6（F2）：部署工件必须保持 LF——
+#   * *.sh：bash 脚本在 Linux 容器/服务器执行；Windows autocrlf=true 的
+#     fresh clone 曾把 CRLF 写入脚本导致 `set -o pipefail\r` 崩溃；
+#   * *.conf.template：vhost 模板经 sed 渲染后喂给 nginx，统一 LF。
+# git 属性优先级高于 core.autocrlf，两端 fresh clone 均得到 LF。
+*.sh text eol=lf
+*.conf.template text eol=lf
+
+# 通用文本 LF（B4.10 发布策略）：blob 层本就为 LF；统一 LF 后
+# clone / git archive 输出不再因 core.autocrlf 产生 CRLF 伪差，
+# 跨平台 diff 噪音与快照可重复性问题同时消除。
+# text=auto 让 Git 自动识别二进制文件（图像/压缩包/证书等），
+# 它们不会被转换；*.sh / *.conf.template 的既有 LF 规则不受影响。
+* text=auto eol=lf

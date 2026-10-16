@@ -1,0 +1,155 @@
+# Minimal CI release guard for SteeringFlow ACP V0.
+#
+# Two jobs, no abstractions:
+#   sqlite   — local full suite on SQLite (no external services)
+#   postgres — PostgreSQL 16 service + real migrations + PG-gated suites
+#
+# Boundaries (deliberately NOT done here): no Docker build/push, no release/tag
+# automation, no deployment, no real WeCom / Tencent ACP live tests, no caching,
+# no matrix, no coverage/artifact upload, no new dependencies.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite:
+    name: Local suite (SQLite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Run local test suite (SQLite)
+        working-directory: backend
+        run: python -m pytest -q
+
+  postgres:
+    name: PostgreSQL suite
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: acp
+          POSTGRES_USER: acp
+          POSTGRES_PASSWORD: acp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U acp -d acp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # Job-scoped: the CLOUD_TEST_DATABASE_URL convention only.
+    # ACP_TEST_PG_URL / ACP_TEST_PG_ADMIN_URL are scoped to the RLS step below so
+    # that the full-suite step does not accidentally exercise the app role against
+    # a schema another test may have reset.
+    env:
+      CLOUD_TEST_DATABASE_URL: postgresql+psycopg://acp:acp@localhost:5432/acp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Wait for PostgreSQL and create runtime role (non-superuser)
+        run: |
+          python - <<'PY'
+          import time
+
+          import psycopg
+
+          dsn = "postgresql://acp:acp@localhost:5432/acp"
+          for _ in range(30):
+              try:
+                  conn = psycopg.connect(dsn, autocommit=True)
+                  break
+              except psycopg.OperationalError:
+                  time.sleep(2)
+          else:
+              raise SystemExit("PostgreSQL did not become ready in time")
+
+          with conn.cursor() as cur:
+              # Runtime app role: NOSUPERUSER + NOBYPASSRLS (RLS only applies to
+              # non-superuser roles). CI-local credentials only.
+              cur.execute(
+                  "DO $$ BEGIN IF NOT EXISTS "
+                  "(SELECT FROM pg_roles WHERE rolname = 'acp_app') "
+                  "THEN CREATE ROLE acp_app LOGIN PASSWORD 'acp_app'; END IF; END $$;"
+              )
+              cur.execute(
+                  "ALTER ROLE acp_app "
+                  "NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;"
+              )
+              cur.execute("GRANT CONNECT ON DATABASE acp TO acp_app;")
+              cur.execute("GRANT USAGE ON SCHEMA public TO acp_app;")
+              cur.execute(
+                  "GRANT SELECT, INSERT, UPDATE, DELETE "
+                  "ON ALL TABLES IN SCHEMA public TO acp_app;"
+              )
+              cur.execute(
+                  "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO acp_app;"
+              )
+              # Migrations run as the admin (acp); future tables/sequences are
+              # auto-granted to the app role (mirrors _deploy/postgres/init/10_app_role.sh).
+              cur.execute(
+                  "ALTER DEFAULT PRIVILEGES FOR ROLE acp IN SCHEMA public "
+                  "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO acp_app;"
+              )
+              cur.execute(
+                  "ALTER DEFAULT PRIVILEGES FOR ROLE acp IN SCHEMA public "
+                  "GRANT USAGE, SELECT ON SEQUENCES TO acp_app;"
+              )
+              cur.execute(
+                  "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'acp_app'"
+              )
+              is_super, bypass_rls = cur.fetchone()
+              assert not is_super and not bypass_rls, (
+                  "acp_app must be NOSUPERUSER NOBYPASSRLS for RLS to apply"
+              )
+          conn.close()
+          print("acp_app ready (NOSUPERUSER, NOBYPASSRLS)")
+          PY
+
+      - name: Apply migrations (Alembic)
+        working-directory: backend
+        env:
+          # Real project invocation: alembic resolves DATABASE_URL first.
+          DATABASE_URL: postgresql+psycopg://acp:acp@localhost:5432/acp
+        run: python -m alembic upgrade head
+
+      - name: RLS bootstrap regression (app role, fail-closed)
+        working-directory: backend
+        env:
+          # Non-superuser app role for RLS verification; admin role for migrations.
+          ACP_TEST_PG_URL: postgresql+psycopg://acp_app:acp_app@localhost:5432/acp
+          ACP_TEST_PG_ADMIN_URL: postgresql+psycopg://acp:acp@localhost:5432/acp
+        run: |
+          python -m pytest tests/test_cloud_0_1_3_1b_wecom_rls_bootstrap_regression.py -q -rs | tee "$RUNNER_TEMP/rls_out.txt"
+          if grep -Eq '[0-9]+ skipped' "$RUNNER_TEMP/rls_out.txt"; then
+            echo "::error::RLS bootstrap regression was skipped — ACP_TEST_PG_URL not effective (fail-closed)"
+            exit 1
+          fi
+
+      - name: Run test suite (CLOUD_TEST_DATABASE_URL)
+        working-directory: backend
+        run: python -m pytest -q -rs

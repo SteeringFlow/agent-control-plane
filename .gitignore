@@ -1,0 +1,89 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 构建 / 打包产物
+build/
+dist/
+*.egg
+.eggs/
+
+# 本地数据库（Step 5.2 起）
+*.db
+*.sqlite3
+
+# ---------------------------------------------------------------------------
+# Credential / 本地配置（Step 10.1.5 Credential Boundary）
+#
+# backend/.env 含真实 Tencent ACP credentials，绝不能进入版本库。
+#   .env        —— 匹配任意目录下精确名为 .env 的文件
+#   *.env       —— 覆盖 .env.local / .env.production 等所有变体
+#   !.env.example —— 安全模板（只含键名、不含值），必须入库，供新人照抄
+# ---------------------------------------------------------------------------
+.env
+*.env
+!.env.example
+
+# 测试 / 覆盖率
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
+
+# ---------------------------------------------------------------------------
+# 内部 Pilot 部署 / 调试产物（15.1 Credential Boundary → 16.1.3.3 收敛）
+#
+# 15.1 曾整目录忽略 _deploy/（其中含真实 TOKEN、个人数据 fixture 与
+# acp_deploy.zip，绝不入库）。16.1.3.3 起 _deploy/ 成为**可版本化部署工件**
+# （nginx vhost 模板 + setup 脚本，均无凭据），因此忽略范围收敛为：
+#   _deploy/nginx/runtime/  —— 渲染后 vhost / TLS 证书私钥 / htpasswd（全部
+#                              provisioning 产物，含敏感数据，绝不入库）
+# 历史一次性脚本（acp_deploy.zip、个人 fixture 等）本就不在本仓工作树内。
+# ---------------------------------------------------------------------------
+_deploy/nginx/runtime/
+
+# ---------------------------------------------------------------------------
+# 15.1 Staging Audit 补漏（这些曾被 git add -A 扫进暂存区）
+# ---------------------------------------------------------------------------
+
+# 运行 / 调试输出：除 *.log 外还有 *.err（uvicorn 等把 stderr 落成 .err）
+*.err
+
+# 内部 ACP wire capture 产物（含真实报文样本）
+backend/artifacts/
+
+# 工具会话产物
+.playwright-cli/
+
+# UI 一次性线框草稿（未被任何代码 / 文档引用）
+form.yaml
+ui-initial.yaml
+
+# 浏览器 a11y 快照（同类一次性工具产物；曾被误提交为 backend/ws.yaml）
+ws.yaml
+
+# ---------------------------------------------------------------------------
+# 15.2.3 Local First Success：local channel 的交付 sink（运行时产物）
+# LocalChannelAdapter.deliver() 把响应追加到本地 outbox；这是本地开发产物，
+# 每台机器的内容不同，绝不入库。
+# ---------------------------------------------------------------------------
+backend/data/local_outbox.jsonl
+
+# ---------------------------------------------------------------------------
+# M7-AUI-10.8.5 Release Snapshot：排除不入库内容
+# qwenwork/ —— 画布原型（位于 frontend/ 静态托管面内，入库即公网暴露）
+# _j.txt    —— 浏览器无障碍树探针残留（仓库根，零引用）
+# ---------------------------------------------------------------------------
+frontend/qwenwork/
+_j.txt

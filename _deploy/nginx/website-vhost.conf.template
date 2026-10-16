@@ -1,0 +1,50 @@
+# website-vhost.conf.template — SteeringFlow marketing site (M8.1.3-A Root Cause B fix)
+#
+# Rendered by _deploy/deploy-website.sh -> runtime/rendered/website-vhost.conf.
+# Pure static marketing site; no app proxy.
+#
+# Security posture (M8.1.1 / M8.1.2):
+#   * Dotfile deny (except .well-known) blocks /.git etc. Defense in depth:
+#     the webroot is now a git-archive artifact with NO .git present.
+#   * /tls/ returns 404 — TLS material must never be served.
+#
+# Placeholders (substituted by deploy-website.sh; rendered file must not retain __WEBSITE_*):
+#   __WEBSITE_TLS_CERT__   fullchain path inside container
+#   __WEBSITE_TLS_KEY__    privkey path inside container
+server {
+    listen 80;
+    server_name steeringflow.com www.steeringflow.com;
+
+    # ACME HTTP-01 challenge (webroot mode). certbot writes into
+    # $WEBSITE_DIR/.well-known/acme-challenge (WEBSITE_DIR = the artifact dir).
+    location ^~ /.well-known/acme-challenge/ {
+        root /usr/share/nginx/html/website;
+        default_type text/plain;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name steeringflow.com www.steeringflow.com;
+
+    ssl_certificate     __WEBSITE_TLS_CERT__;
+    ssl_certificate_key __WEBSITE_TLS_KEY__;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    root /usr/share/nginx/html/website;
+    index index.html;
+
+    # TLS material must never be served, even if placed under webroot by mistake.
+    location ^~ /tls/ { return 404; }
+
+    # Block dotfiles (e.g. .git) except ACME's .well-known.
+    location ~ /\.(?!well-known) { deny all; }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
