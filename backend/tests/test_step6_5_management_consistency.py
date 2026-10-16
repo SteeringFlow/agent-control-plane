@@ -419,6 +419,8 @@ EXPECTED_ERRORS = {
     "DuplicateBrowserLoginError", "InvalidBrowserAuthInputError",
     # M7-AUI-10.5：WorkBuddy 外部身份租户内重复（应用级软约束 → 409）
     "DuplicateExternalAgentError",
+    # M7-AUI-10.6.7：WeCom Bot 渠道 bot_id 租户内重复（409 duplicate_bot_channel）
+    "DuplicateBotChannelError",
 }
 
 

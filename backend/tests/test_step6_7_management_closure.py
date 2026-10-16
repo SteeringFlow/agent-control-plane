@@ -719,7 +719,7 @@ def test_reverse_audit_next_stage_not_smuggled() -> None:
                        if p.stem != "__init__")
     # M6.6-C3 / ADR-12: + bootstrap（执行边界组件）/ bootstrap_arms（管理面用例）
     assert app_files == ["access_authorization",
-                         "agent_dispatch", "agents", "bootstrap", "bootstrap_arms",
+                         "agent_dispatch", "agent_identity", "agents", "bootstrap", "bootstrap_arms",
                          "browser_auth", "channel_inbound",
                          "channels", "connection_conversations", "connections",
                          "coordinator", "delivery",
@@ -728,6 +728,6 @@ def test_reverse_audit_next_stage_not_smuggled() -> None:
                          "routing", "runtime", "session_creation",
                          "session_resolution", "tenant_fanout",
                          "tenant_provisioning", "users", "worker"], \
-        f"application 文件面漂移：{app_files}"  # 12.9.4.5: + worker / 12.9.4.16: + driver / 13.1: + interaction_observability / C: + browser_auth / Cloud-0.1.2.1: + tenant_provisioning
+        f"application 文件面漂移：{app_files}"  # 12.9.4.5: + worker / 12.9.4.16: + driver / 13.1: + interaction_observability / C: + browser_auth / Cloud-0.1.2.1: + tenant_provisioning / M7-AUI-10.5: + agent_identity
 
     assert not problems, "下一阶段实体被提前实现：\n" + "\n".join(problems)

@@ -1,17 +1,17 @@
-# SteeringFlow OSS Export Manifest (B4.38 final candidate, boundary-guarded)
-source_commit=5bb1266670911109220529d712f10cf357aa3763
-generated_at=2026-10-16T06:52:16Z
+# SteeringFlow OSS Export Manifest (P3.4 refresh candidate, boundary-guarded)
+source_commit=8781f7ec993a0d492d58721936c55fea79f41138
+generated_at=2026-10-16T12:51:30Z
 decision=A1/B1 (docs/strategy/oss-vs-cloud-boundary.md, internal)
 export_method=git-archive(commit)+audited-overlay(explicit-list)+exclusions+denylist-guards
 audited_overlay_count=32
 eol_policy=* text=auto eol=lf (blob already LF; candidate normalized to LF; verified zero content drift vs git blobs)
 eol_normalized_files=30
-boundary_guards=input-overlay-denylist-guard + output-denylist/secret-pattern-guard (B4.38); both verified by negative tests
+boundary_guards=input-overlay-denylist-guard + output-denylist/secret-pattern-guard (B4.38; reused in P3.4); both verified by negative tests
 excludes=frontend/;docs/oss/;docs/strategy/;.oss-export-exclude.txt;docs/cloud-0.2-commercial-validation-gate.md;docs/cloud-0.2.3-real-customer-pilot-gate.md;docs/pilot-run-log.md;docs/cloud-v0-release-freeze.md;_deploy/certbot/certbot-renew.sh;_deploy/certbot/README.md;_deploy/DEPLOY_RUNBOOK.md;docs/M7-AUI-10.8.23-*.md;0;build
 excluded_paths_count=36
 explicit_denylist_count=18
 included_files_count=569
-diff_vs_b4_13=manifest boundary records only; public file content unchanged (verified by per-file normalized comparison)
+diff_vs_b4_38=public file content unchanged except the two approved test-inventory fixes (source commit 8781f7e); verified by per-file normalized comparison
 manifest_note=this manifest file itself is NOT hashed in the list below
 --- AUDITED OVERLAY FILES (sha256  relpath  origin) ---
 7de79c018c56cb6e5168df67d603e8248a2c82b3f218f0c58ad3274a36790333  backend/app/main.py  src-worktree
@@ -456,9 +456,9 @@ b1ce7d0091ca4387d2cc13769db36f9960818fb74dce1ad6237d5660224031ae  backend/tests/
 c01dfe4b8f3a010522356bd6492a72365faf981b8562bb2871339bfbb71276e4  backend/tests/test_step6_2_agent_management.py
 f2bd234a966c01fcc0f9472dcaa3de8ab4fdba58f67061771d85117d94b427d4  backend/tests/test_step6_3_channel_management.py
 887bef3150488c0eeec2baa149b18d87ecda9d26fd3cee6febeca6bb2b26e37e  backend/tests/test_step6_4_user_management.py
-fc985623a3b512d4274d1b4f0dbede23afad3e76065456ed5d29413ab22e6ed1  backend/tests/test_step6_5_management_consistency.py
+ca5545205ad5a25fc58a6c2d41bb4a633e22f488bc972bfb669a4ee11fb70a62  backend/tests/test_step6_5_management_consistency.py
 8d68cd1d6ec5939a8b4d1309230006e118a0efa26404e8a26bfc5fa6a75ff457  backend/tests/test_step6_6_identity_management.py
-b26a894e467c9e7e0f21a5a60594e109bdd73e51c66baa05e0b1111aeee1dc06  backend/tests/test_step6_7_management_closure.py
+b0cfa02efcee906f802c1d8ac609157d9ee45af1703d18b4b106125bb1f5c128  backend/tests/test_step6_7_management_closure.py
 78d5d2c4ec16a648435e776c327f7a534899ccc237da1891a41772555a12e3ce  backend/tests/test_step7_1_connection_domain_contract.py
 1a05b48b7398323cd8cdff702a3bd51b1bb62fdb099e52133196aa62bb019d10  backend/tests/test_step7_2_connection_management.py
 f8b867241c3b32c8189f02a4b27190c2cbd3b2651e8e0a0bfe5e9d0e5a21e429  backend/tests/test_step7_3_connection_management_audit.py
