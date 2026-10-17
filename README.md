@@ -122,7 +122,7 @@ erode. Key building blocks:
 
 ## Prerequisites
 
-- Python 3.11+ (developed against 3.12/3.13)
+- Python 3.14 (the version tested by CI and used by the Docker images; other versions are untested)
 - pip
 - Docker + Docker Compose (optional — for the container path)
 - No external services required for the quick start (SQLite + local channel +
