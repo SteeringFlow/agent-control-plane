@@ -2,7 +2,7 @@
 ## RB-C3-01：Bootstrap Authorization Source not formally represented
 
 > 本文件是 **Release Blocker 台账条目**，不是 backlog item，也不是设计文档。
-> 权威依据：`docs/cloud-v0-release-freeze.md` §3（Triage Rule）。
+> 权威依据：V0 冻结治理文档（内部治理文档，不随 OSS 发布）§3（Triage Rule）。
 > **本文件不修改冻结文档本身。**
 
 ---
@@ -14,7 +14,7 @@
 | **ID** | `RB-C3-01` |
 | **标题** | Bootstrap Authorization Source not formally represented |
 | **状态** | **CLOSED**（关闭条件已达成，见 §5） |
-| **引用号** | `cloud-v0-release-freeze.md` §3.1（Release Blocker 判定） |
+| **引用号** | V0 冻结治理文档 §3.1（Release Blocker 判定；内部治理文档，不随 OSS 发布） |
 | **关闭条件** | **ADR-12 已签发** |
 | **关闭证据** | `docs/architecture/adr-12-first-message-bootstrap-arm.md`（本轮签发） |
 | **关联** | `docs/architecture/adr-11-conversation-grant-authorization.md`（补签，配套） |
@@ -52,7 +52,7 @@ for a first-time conversation:
 | E-6 | 未绑定 Identity 的创建主体在冻结台账上是 **Nobody**（Gate 2.6 D4 三问未被任何 ADR 回答） | `docs/architecture/implementation-gate-2-6-…-decision.md:180-217`；CP-1 §6.2 |
 
 ⇒ §3.1 条件 ①「**阻断发布**：不修则 V0 无法对外交付 / Golden Path 阻断」成立
-（Golden Path 阻断是 §3.1 列举的典型 blocker 形态，`cloud-v0-release-freeze.md:71`）。
+（Golden Path 阻断是 §3.1 列举的典型 blocker 形态，V0 冻结治理文档:71）。
 
 ---
 
@@ -73,7 +73,7 @@ for a first-time conversation:
 ```
 实现物 = bootstrap_arms 新表 + Arm 端点 + bootstrap.py 组件
 
-按 cloud-v0-release-freeze.md §3.2：
+按 V0 冻结治理文档 §3.2：
   「新功能 / 新端点 / 新配置项」→ **不是** release blocker → post-release backlog
 
 ⇒ 实现物**不得**借用 RB-C3-01 的 blocker 身份进入 V0。
@@ -119,7 +119,7 @@ ADR-12 签发后：
 ## 7. 本文件未做的事
 
 ```
-❌ 未修改 docs/cloud-v0-release-freeze.md
+❌ 未修改 V0 冻结治理文档（内部治理文档，不随 OSS 发布）
 ❌ 未修改任何 ADR / Package 2-C / Gate 2.6
 ❌ 未创建 migration / 端点 / 代码 / 测试
 ❌ 未把实现物标为 blocker（§4.2 明确禁止）

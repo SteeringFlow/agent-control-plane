@@ -34,7 +34,7 @@ connect-agent.html
 | `frontend/connect-agent.js` | 新增：唯一交互逻辑——编排既有端点，处理孤儿 Agent / 探针 |
 | `frontend/workspace.html` | `#cta-connect-agent` 指向 `/connect-agent.html`（原来指向 `/index.html`） |
 | `frontend/styles.css` | 追加 `.step-title` / `.steps` / `.step-item` / `.step-ok|fail|pending`（复用既有变量，纯 CSS） |
-| `frontend/README.md` | 记录本页与 Golden Path 语义 |
+| 前端 README（`frontend/` 整体不随初始 OSS 发布） | 记录本页与 Golden Path 语义 |
 | `backend/tests/test_cloud_0_1_2_3_2_connect_agent_golden_path_ui.py` | 新增：15 项机器化护栏 |
 
 **后端零改动**：无新 Service / 端点 / schema / 表 / 状态机 / 迁移。

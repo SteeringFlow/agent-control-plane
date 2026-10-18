@@ -21,8 +21,10 @@ unknown 保守纪律：绝不静默跳过检查——依赖被排除文件的测
 from __future__ import annotations
 
 import ast
+import fnmatch
 import functools
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -176,3 +178,120 @@ def _consuming_tests_cached(path_str: str) -> frozenset[str]:
 def consuming_tests_for(path: Path | str) -> frozenset[str]:
     """带缓存的对外入口（conftest 收集期按文件调用）。"""
     return _consuming_tests_cached(str(path))
+
+
+# ==========================================================================
+# Clean Export 文件集计算（M8.1 导出规则固化）
+# ==========================================================================
+#
+# 背景：导出曾是"文档化流程"（OSS_EXPORT_MANIFEST.txt 的 export_method 字段 +
+# 审计文档 §4.2），排除规则分散在 denylist 与流程级 excludes= 字段两处，
+# 曾导致手工裁剪遗漏 _deploy/ 的生产专属工件（M8 发现）。
+#
+# 本模块把**已审计的导出语义**固化为可执行函数，作为回归守卫：
+#   白名单 = `git ls-files`（git 对象为唯一来源，严禁整目录拷贝）
+#     - denylist 条目（精确路径或 glob；唯一文件级排除事实源）
+#     - 前缀规则命中（.oss-export-* 控制面文件，denylist 头部记录）
+#     - 流程级目录/产品范围排除（PROCESS_LEVEL_EXCLUDES，见下）
+#   manifest 条目 = 最终文件集（不含 manifest 自身）
+#
+# 分层职责（docs/oss/OSS_PUBLIC_BOUNDARY_AUDIT.md §6 记录）：
+#   - 文件级公开边界政策 -> .oss-export-exclude.txt（唯一事实源）；
+#   - 目录级/产品范围排除 -> PROCESS_LEVEL_EXCLUDES（A1 无 UI、内部治理目录）；
+#   - 两者由 compute_export_tree() 统一执行，由 test_b3_3 回归断言守护。
+
+#: 流程级（目录/产品范围）排除项。
+#: 来源：docs/oss/OSS_PUBLIC_BOUNDARY_AUDIT.md §4.2 与 OSS_EXPORT_MANIFEST.txt
+#: 的 excludes= 字段。这些是目录级/产品范围决策，不属于文件级 denylist
+#: （"每行一个 path"）；_deploy/ 的生产专属工件已统一收入 denylist（M8.1）。
+PROCESS_LEVEL_EXCLUDES: tuple[str, ...] = (
+    "frontend/",      # A1：初始 OSS 不含 Web UI（产品范围决策）
+    "docs/oss/",      # 内部发布管控文档目录（审计文档自声明默认不进快照）
+    "docs/strategy/",  # 内部策略决策目录
+)
+
+#: denylist 头部记录的前缀规则：控制面文件自身永不进入 Public Export。
+PREFIX_EXCLUDE_RULES: tuple[str, ...] = (".oss-export-",)
+
+
+def parse_denylist(text: str) -> tuple[str, ...]:
+    """解析 denylist 文本：去注释与空行，返回路径条目（支持 glob）。
+
+    纪律与 .oss-export-exclude.txt 头部一致：每行一个 path；# 起头为注释。
+    """
+    return tuple(
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    )
+
+
+def _entry_matches(relpath: str, entry: str) -> bool:
+    """denylist 条目匹配：含 glob 字符时按 fnmatch，否则精确相等。"""
+    if any(ch in entry for ch in "*?["):
+        return fnmatch.fnmatch(relpath, entry)
+    return relpath == entry
+
+
+def _tracked_files(root: Path) -> tuple[str, ...]:
+    """真实白名单：git ls-files（denylist 头部声明的导出白名单来源）。"""
+    result = subprocess.run(
+        ["git", "ls-files"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return tuple(sorted(p for p in result.stdout.splitlines() if p.strip()))
+
+
+@functools.lru_cache(maxsize=1)
+def _compute_export_tree_cached(
+    root_str: str,
+) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]]:
+    root = Path(root_str)
+    denylist_path = root / ".oss-export-exclude.txt"
+    if not denylist_path.is_file():
+        raise RuntimeError(
+            "compute_export_tree 需要 source provenance（.oss-export-exclude.txt 缺失）"
+        )
+    entries = parse_denylist(denylist_path.read_text(encoding="utf-8"))
+    tracked = _tracked_files(root)
+
+    included: list[str] = []
+    excluded: list[tuple[str, str]] = []
+    for relpath in tracked:
+        reason = None
+        if any(relpath.startswith(prefix) for prefix in PREFIX_EXCLUDE_RULES):
+            reason = "prefix-rule"
+        else:
+            for entry in entries:
+                if _entry_matches(relpath, entry):
+                    reason = f"denylist:{entry}"
+                    break
+        if reason is None:
+            for dir_exclude in PROCESS_LEVEL_EXCLUDES:
+                if relpath.startswith(dir_exclude):
+                    reason = f"process:{dir_exclude}"
+                    break
+        if reason is None:
+            included.append(relpath)
+        else:
+            excluded.append((relpath, reason))
+    return tuple(included), tuple(sorted(excluded))
+
+
+def compute_export_tree(root: Path | None = None) -> dict[str, object]:
+    """按已审计导出语义计算 Clean Export 文件集（M8.1 固化的回归守卫）。
+
+    返回 included / excluded / manifest_entries；manifest_entries 与 included
+    一致（不含 manifest 自身）——manifest 必须准确反映最终导出树，不得把被
+    排除文件记录为有效导出文件。仅在 source provenance 下可计算。
+    """
+    root = ROOT if root is None else root
+    included, excluded = _compute_export_tree_cached(str(root))
+    return {
+        "included": frozenset(included),
+        "excluded": dict(excluded),
+        "manifest_entries": tuple(sorted(included)),
+    }

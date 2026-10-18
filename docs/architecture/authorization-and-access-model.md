@@ -7,7 +7,7 @@
 > 命名说明：本文件是一组 ADR 的合集（**ADR-1 ~ ADR-9** + **ADR-10 UX 设计约束**），
 > 采用 `docs/architecture/` 归置——它不是某个 Step 的实施记录，而是**跨 Step 的
 > 架构裁决**。
-> 与 V0 冻结的关系：Access Authorization 属 `cloud-v0-release-freeze.md` §1 之外的
+> 与 V0 冻结的关系：Access Authorization 属 V0 冻结治理文档（内部治理文档，不随 OSS 发布）§1 之外的
 > **新范围**。V0 冻结期内**不实现**；实现步须在解冻 / 新阶段立项后进入，且实现
 > 不得违背本文件任何一条红线。
 

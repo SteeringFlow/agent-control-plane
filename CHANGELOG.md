@@ -7,21 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Changes on `master` after the `v0.1.0-rc.8` tag. Not yet part of any release
-> candidate; the next candidate is planned as `v0.1.0-rc.9` (not yet tagged).
+> Changes on `master` after the `0.1.0-rc.10` candidate cut. Not yet part of
+> any release candidate; the next candidate is planned as `v0.1.0-rc.11`
+> (not yet tagged).
+
+## [0.1.0-rc.10] - TBD
+
+> Next release candidate prepared on `master` (not yet tagged). Bundles the
+> changes accumulated on the private source line since the `v0.1.0-rc.8` tag
+> and the audited OSS export-boundary governance work (M8 series). The public
+> OSS tree for this candidate is produced by the audited clean-export
+> procedure (denylist + process-level exclusions); the `_deploy/` public set
+> and the 568-file export boundary are unchanged.
 
 ### Added
 
-- **Production deployment runbook** for the rc.8 cutover (an internal
-  deployment file, not part of this repository): authorization-gated cutover /
-  rollback procedure with clean-build-context and image-identity discipline
-  (`a251e94`).
+- **Self-hosting deployment and operations runbook**
+  (`docs/M7_AUI_10_8_PILOT_OPERATIONS_CHECKLIST.md`): the operator-facing
+  pilot checklist has been productized into a public self-hosting runbook —
+  verified, generic content only (fail-closed environment variables,
+  TLS/nginx prerequisites, single-instance `wecom_bot` constraint, public
+  exposure boundary, health checks, API/CLI onboarding, troubleshooting
+  entry points).
+- **Clean-export regression guards**
+  (`backend/tests/oss_export_boundary.py`,
+  `backend/tests/test_b3_3_export_boundary.py`): the audited export semantics
+  (`git ls-files` whitelist − denylist − prefix rules − process-level
+  excludes) are now enforced by executable checks, including zero-tolerance
+  guards against exported documents referencing excluded files.
+- **Production deployment runbook** for the rc.8 cutover
+  (an internal deployment file, not part of this repository): authoritative,
+  authorization-gated cutover / rollback procedure with clean-build-context and
+  image-identity discipline (`a251e94`).
 - **Early-access feedback contact entry** in the web UI (`e86c4ce`).
 
 ### Fixed
 
 - **Auth register route exposure boundary** enforced
   (`deb6b8f`, `backend/app/api/auth.py`).
+- **Documentation references to internal-only files**: public documents no
+  longer cite files that are excluded from the public export (the internal
+  deployment runbook path in this changelog; internal acceptance-baseline and
+  V0 freeze-governance references in architecture and decision records);
+  the affected references now state the internal status instead of dangling.
+- **`SECURITY.md` scope wording**: the security scope lists the management
+  **API**, matching the shipped OSS form (no web UI in this release).
 
 ## [0.1.0-rc.8] - 2026-10-10
 

@@ -267,7 +267,7 @@ COMMIT
 ## 12. 与 Cloud V0 冻结的关系
 
 ```
-本 ADR **不修改** docs/cloud-v0-release-freeze.md。
+本 ADR **不修改** V0 冻结治理文档（内部治理文档，不随 OSS 发布）。
 bootstrap_arms（新表）+ Arm 端点（新端点）在冻结文档下默认属 §3.2 的 post-release backlog。
 入 V0 必须另有一条显式 **Release Blocker 记录**
 （见 docs/cloud-v0-release-blocker-bootstrap-authorization-source.md）。
