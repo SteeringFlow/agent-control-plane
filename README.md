@@ -278,7 +278,13 @@ docker build -f Dockerfile.oss -t steeringflow-acp .
 docker run --rm -p 8000:8000 steeringflow-acp
 
 # Cloud profile (PostgreSQL + Alembic-managed schema evolution, includes the
-# web console via the root Dockerfile):
+# web console via the root Dockerfile).
+#
+# NOTE — applies to the **cloud source tree only**: the shipped Compose files
+# build the root `Dockerfile`, which copies `frontend/`; this snapshot has no
+# `frontend/`, so `docker compose … --build` fails here. From this snapshot use
+# the `Dockerfile.oss` build above, and point `DATABASE_URL` at your own
+# PostgreSQL if you need the PostgreSQL profile (see "Configuration reference").
 docker compose -f docker-compose.cloud.yml up -d --build
 ```
 
@@ -366,8 +372,13 @@ agent-control-plane/
 ## Project status
 
 SteeringFlow is developed in small, audited increments ("steps"); the current
-line is the `v0.1.0-rc.x` release-candidate series. The current candidate is
-`0.1.0-rc.11` — **not tagged and not published yet**. Recent milestones:
+line is the `v0.1.0-rc.x` release-candidate series. The candidate now being
+prepared is `0.1.0-rc.12` — **not tagged and not published yet**, and it has
+**not yet been accepted by a real GitHub CI run** (its acceptance must come from
+the GitHub Actions run, not from local test runs). The previous candidate
+`0.1.0-rc.11` does carry a public tag, but **its GitHub Actions PostgreSQL job
+failed** (the SQLite job passed) and **no public prerelease was created** for
+it. Recent milestones:
 
 | Milestone | Status |
 |---|---|
@@ -379,10 +390,10 @@ line is the `v0.1.0-rc.x` release-candidate series. The current candidate is
 | Async worker execution (ACK ≠ execution), multi-agent isolation | ✅ |
 | Local first-success loop (zero external dependencies) | ✅ |
 | Deployment boundary (nginx/compose, credential fail-closed injection) | ✅ |
-| Delivery lifecycle separation + delivery observability + guard-failure delivery protection | ✅ (rc.11 candidate) |
-| Optional delivery recovery (atomic claim, attempt fence, backfill) — **off by default**, not production-validated | 🚧 rc.11 candidate (opt-in, operator runbook) |
-| Artifact references in outbound delivery (URI policy, no byte transfer) | ✅ (rc.11 candidate) |
-| Release hardening, docs, snapshot publication | 🚧 in progress (`rc.11` candidate — not tagged, not published; the public `v0.1.0-rc.10` prerelease on GitHub was published from an earlier snapshot and does not contain this candidate) |
+| Delivery lifecycle separation + delivery observability + guard-failure delivery protection | ✅ (rc.11 candidate; carried into rc.12) |
+| Optional delivery recovery (atomic claim, attempt fence, backfill) — **off by default**, not production-validated | 🚧 rc.11 candidate, carried into rc.12 (opt-in, operator runbook) |
+| Artifact references in outbound delivery (URI policy, no byte transfer) | ✅ (rc.11 candidate; carried into rc.12) |
+| Release hardening, docs, snapshot publication | 🚧 in progress (`rc.12` candidate — **not tagged, not published, and not yet accepted by a real GitHub CI run**; the public `v0.1.0-rc.10` prerelease on GitHub was published from an earlier snapshot and does not contain this candidate, and the public `v0.1.0-rc.11` tag exists but its GitHub Actions PostgreSQL job failed — no public prerelease was created for it) |
 
 Design/decision details for every milestone are recorded under `docs/`.
 

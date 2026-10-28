@@ -479,10 +479,12 @@ def _seed_historical_sessions(url: str) -> None:
 
 
 @_PG
-def test_b1_migration_head_is_0007() -> None:
-    """0007 已在链上；head 随新增迁移推进（M6.6-C3 / ADR-12 → 0008）。
+def test_b1_migration_chain_contains_0007_and_head_is_chain_tip() -> None:
+    """0007 仍在迁移链上；head 随新增迁移推进，且必须是**链末端**的一环。
 
-    本守卫的语义是「0007 存在且链 head 可解析」，不是「head 永远是 0007」。
+    本守卫的语义是「0007 存在且链 head 可解析、且 head 就是迁移链的末端」，
+    不是「head 永远是某个字面值」——因此后续新增迁移（0008 / 0009 / …）**无需**
+    改动本用例；只有「0007 掉链」「head 不可解析」「head 不是链末端」才会失败。
     """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
@@ -493,7 +495,11 @@ def test_b1_migration_head_is_0007() -> None:
     assert script.get_revision("0007") is not None, "0007 必须在迁移链上"
     head = script.get_current_head()
     assert script.get_revision(head) is not None
-    assert head == "0008", f"M6.6-C3 / ADR-12 之后 head 应为 0008：{head}"
+    # head 必须是迁移链的末端（链推进时自动跟随，**不写死字面值**）
+    # 注意：alembic 的 walk_revisions 产出顺序是 **head → base**（逆时间序）。
+    chain = [r.revision for r in script.walk_revisions()]
+    assert chain[0] == head, f"head 必须是迁移链末端：{head} vs {chain}"
+    assert "0007" in chain, "0007 必须在 head 的迁移链上（未被摘链）"
 
 
 @_PG

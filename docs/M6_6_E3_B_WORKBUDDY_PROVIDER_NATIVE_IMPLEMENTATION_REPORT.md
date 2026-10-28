@@ -214,7 +214,7 @@ Verify 生成的缓存使用 `protocol="tencent-acp-sse"` + `endpoint/bearer_tok
 - 受新增 Adapter 影响的守卫批（13 文件）：**258 passed**。
 - **全量** `python -m pytest tests/ -q`：**2291 passed, 36 skipped, 0 failed**（49 `ERROR at
   setup` 为**环境级** `PermissionError`——陈旧且无写权限的 pytest 临时目录
-  `...\Temp\pytest-of-xd54622`，与本次改动无关；以隔离 `--basetemp` 复跑同一批文件 →
+  `...\Temp\pytest-of-<user>`，与本次改动无关；以隔离 `--basetemp` 复跑同一批文件 →
   `52 passed, 6 skipped, 0 errors` 证明）。
 
 ---

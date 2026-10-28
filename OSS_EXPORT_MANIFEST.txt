@@ -1,10 +1,10 @@
-SteeringFlow OSS Export Manifest (0.1.0-rc.11 candidate export - DRAFT, NOT PUBLISHED)
+SteeringFlow OSS Export Manifest (0.1.0-rc.12 candidate export - DRAFT, NOT PUBLISHED)
 
-source_commit=e04ec8a110cfbd8c725cc205d76bc9e6fa6457ab
-source_tree=db0346897706e0fc3ef4378b022abe0543b6ff04
-generated_at=2026-10-28T13:03:47+08:00
-version=0.1.0-rc.11
-decision=candidate export for readiness review only; version labelling, tag, release identity and publication are separate steps pending authorization (the VERSION file inside this tree reads 0.1.0-rc.11)
+source_commit=d306aa53f4335ce6e1e5924f97655f5936f0e80e
+source_tree=a49267c1b5bde15dbb5e81f0df90fc79cffc74ea
+generated_at=2026-10-28T15:44:46+08:00
+version=0.1.0-rc.12
+decision=candidate export for readiness review only; version labelling, tag, release identity and publication are separate steps pending authorization (the VERSION file inside this tree reads 0.1.0-rc.12)
 export_method=git-ls-tree(HEAD)+git-cat-file(blob)+process-exclusions+denylist-guards; source is the committed HEAD tree; no commit created; no private git history carried
 eol_policy=git blob content as committed (LF-normalized)
 excludes=frontend/;docs/oss/;docs/strategy/;.oss-export-;docs/cloud-0.2-commercial-validation-gate.md;docs/cloud-0.2.3-real-customer-pilot-gate.md;docs/pilot-run-log.md;backend/ws.yaml;docs/cloud-v0-release-freeze.md;docs/PROJECT_OVERVIEW.md;docs/INDEX.md;docs/strategy/oss-vs-cloud-boundary.md;docs/M7-AUI-10.8.23-A_PILOT_ENTRY_EVIDENCE_AUDIT.md;docs/M7-AUI-10.8.23-B_PILOT_ENTRY_CHECKLIST.md;docs/M7-AUI-10.8.23-B_PILOT_OPERATIONS_PLAN.md;docs/M7-AUI-10.8.23-B_PILOT_RISK_ACCEPTANCE_REGISTER.md;docs/M7-AUI-10.8.23-B.7_FIRST_SCHEDULED_BACKUP_VERIFICATION.md;docs/M7-AUI-10.8.23-C.1_OPERATOR_RISK_REVIEW_WORKSHEET.md;docs/M7-AUI-10.8.23-C.3_REMAINING_PILOT_GATE_EVIDENCE_REVIEW.md;docs/M7-AUI-10.8.23-C.4_ISS07_REGISTRATION_BOUNDARY_AUDIT.md;docs/M7-AUI-10.8.23-C.5_ISS07_REGISTRATION_BOUNDARY_FIX_REPORT.md;docs/M7-AUI-10.8.23-C.6_ISS07_FIX_INDEPENDENT_REVIEW.md;docs/M7-AUI-10.8.23-C.7_PRODUCTION_DEPLOYMENT_ISS07_ACCEPTANCE.md;docs/M7-AUI-10.8.23-C.8_ISS07_RISK_REGISTER_CLOSURE.md;docs/M7_AUI_10_6_6_REAL_WECOM_E2E_SUCCESS_BASELINE.md;docs/M7_AUI_10_8_PILOT_OPERATIONS_CHECKLIST_INTERNAL.md;_deploy/certbot/certbot-renew.sh;_deploy/certbot/README.md;_deploy/DEPLOY_RUNBOOK.md;docs/release-rc10-baseline-failure-waiver.md
@@ -17,15 +17,15 @@ c2b66ef037a7aafadcabc49a5f1e2d37bce40d0b4c0d7cca101cbf36293fff1b  .dockerignore
 4f921464a8554f1954314b6fd86b593e71c538d825989989db9a847e1f0be4f3  .gitattributes
 7a6fabd68809637f85c45f90bb2158fcbbbb49516004cfc8c8b8bbd45133e1bb  .github/workflows/ci.yml
 6757218d9b821e2632a13475332fb0d7212d214b515bdf39620c58d52a0368c7  .gitignore
-9e603fa45d2ed29b54c1cfc342a01337f9704adc1d359907057760d0f4c17bad  CHANGELOG.md
+1c2e877fb422fa399226909b08dbdb9eafd081f733644cb97a46fb9442e5c620  CHANGELOG.md
 335f4c0472079cfd6539a3009ce0386a7d7201d73c1f4f2a78978313f430f6e9  CODE_OF_CONDUCT.md
 35be2db16366718121ecdd9935261dc87bb968437154833d5cf7b7cf64d335d9  CONTRIBUTING.md
 782850dbcb8cc1ac128790099a0fd0d382b6a1f4ca3f7e97163227b302a7ace6  Dockerfile
 8e2a161e717d5be1e4b13858903cbb74104a4a62f51bafa63089a650e2d1bbae  Dockerfile.oss
 64fb9966f77b7ad6a3a8b0af70724c1b0a4a6ad754be8e4e4ab9e9b2a4982efa  LICENSE
-6c56b646517dbe98c721a22be63e1ddbd4ff35fc836c9a68424dc07e32c070a9  README.md
+4677eb32fe2c5bed83542aaef62585dcc1714bc589fd9b4d7366706bd831b9f7  README.md
 79ffc7a9eaa891d7f1c6bac750ccec1dacd89a878bdeac6c2a91198313675548  SECURITY.md
-d04e64cbb12f8611728ab49c4b5891ae0f6cc34db9a521796c29fd0d78fe47be  VERSION
+26d1c1ee4cd680fc2706f8a296190f69ffd8bf1efd08cf46ccbe7aa86c872073  VERSION
 def0a32e167e57a96a6d17521e8c8870a55474f5b87d925d32b37da36efadaac  _deploy/certbot/certbot-deploy.sh
 e47affe39cbb816a946f5dd7237f22637b345aee41e21f2d8bc9453961f8c2a6  _deploy/deploy-website.sh
 2cd953a6c89dfee2a75ee628daef40759f8400e9ee73b17738fbbee284c00375  _deploy/nginx/README.md
@@ -298,11 +298,11 @@ f57369bcce1c120bde01ea35b0509f4cdc4cc89c5fd01363cbf2c002d0cde2ad  backend/tests/
 abfa5a4837fc1a8de0f77f8d5197dc595d5028e570d5a68fc1dd7131e2371ab6  backend/tests/test_p1_delivery_lifecycle_separation.py
 f535012ad7bd9449a77853a7a3a4b48c9ac4c0a546b31259071b997843b39cf8  backend/tests/test_p2_delivery_recovery.py
 ce36d8ec4aead446420d77620cbe48106efa74e45efca281fe926149a210f5b8  backend/tests/test_p2_delivery_recovery_postgres.py
-59dcde74adfd3993ee086b6639c3f44b44df07604b443406e1a8e2baf009d03e  backend/tests/test_package_2_step_1_authorization_persistence.py
+39259d843762d97fcdc631a5086dff2563dee1d525168d16fbeb6ef5f667a3fe  backend/tests/test_package_2_step_1_authorization_persistence.py
 eb398866b4b2c4d43596be00d119c274b71e59c99caca539ebadbda48e6eec9f  backend/tests/test_package_2_step_2_runtime_authorization.py
 421723d702d41cf4af00461dfa94a27561e66edcdb1b21028a2c9599bb47e6f2  backend/tests/test_package_2_step_3_grant_management_api.py
 0da45b39ec533857647af3cbc8fc52d100b06573d4be3766852e403a11bc0c93  backend/tests/test_package_2_step_4_authorization_contract_closure.py
-5d8f39c1a2e1080b75c88f11f38360209ab8e6afc5fa47a391ca51b271880901  backend/tests/test_package_2_step_5_postgres_closure.py
+94b2bd6b85a0e4b359e478780ce7681b4b6b7892ef07bc7006c5a80ef3570666  backend/tests/test_package_2_step_5_postgres_closure.py
 d9c38c87dedd80a5789ed9540aff98f06a6e4647ab250d04e233fa9c1a9f11f4  backend/tests/test_package_2_step_7_real_wecom_e2e.py
 c714e924869bee159879e5897990b914241c0b97f448d9ea3e92f6b827d41ba0  backend/tests/test_persistence_smoke.py
 94955accf0317fe0c4f7a3acceb01491f840234e5e7a4da47168b6b33e505212  backend/tests/test_repositories.py
@@ -435,7 +435,7 @@ a408ac11dd5fa50cc4ba32cb9bed8289029637520155a2900e77ac76f038b5cd  docs/M6_6_C3_R
 8fc4023056a363e7cf69599f8d293b6fbfdaefa8f9c847f0a9cde7e67b1d8555  docs/M6_6_C4_CP4_2_FIRST_SUCCESS_CROSS_BOUNDARY_AUDIT.md
 4529b32c9cdf4f9a03408480b42003d0fa91a38cd3e2b33d09eb3fd4f6a6563f  docs/M6_6_D_PROVIDER_ADAPTER_FIRST_SUCCESS_AUDIT.md
 e82c93c8a803b010da029986e594642be4a41be7a79df9477fb8fd186f61595b  docs/M6_6_E3_A_WORKBUDDY_PROVIDER_NATIVE_FEASIBILITY_AUDIT.md
-3b5f738dc6a12459d1135a25006c6d62c63fafd52741da68b38971a45d40f617  docs/M6_6_E3_B_WORKBUDDY_PROVIDER_NATIVE_IMPLEMENTATION_REPORT.md
+dec73248eae22573ab5e60d664e360144042f74e11f3b487e117720b5f7f469d  docs/M6_6_E3_B_WORKBUDDY_PROVIDER_NATIVE_IMPLEMENTATION_REPORT.md
 cc6125ba760ce074d5ec2453ed76239547f5ff9d7b372ae0bcd2c9f74770e015  docs/M6_6_E3_C_WORKBUDDY_OFFICIAL_CONTRACT_E2E_VERIFICATION.md
 0d46cf1eddea94a8144c697e0670cf26f1d966204f7af53741b57d4fb2bd51e6  docs/M7_AUI_10_6_6_DUPLICATE_BOT_CHANNEL_GUARD_AUDIT.md
 235b093730ee4981cd345403349e805d7044dfd75b3b45ddda70a41a334587c3  docs/M7_AUI_10_8_PILOT_OPERATIONS_CHECKLIST.md
@@ -486,7 +486,7 @@ b0b59545b613b4c7a6047ebc05c7cc58dc726d44d9ab5551f74e6ce85c7228fc  docs/step-10.8
 ee749231a44008f6819a4cd225060e500fa918e8f83eeabe5b9631ab59ab1a27  docs/step-10.8.4-persistence-result-wiring.md
 d01626c08b86039289fbfe43341a4b78faed598c5b15e268c3b0d58ba7505dd5  docs/step-10.8.5-runtime-evidence-read-closure-audit.md
 6ac2979efd587c0c651a68c454d60a06ba07f037cc81dabff5234e89d536a7ab  docs/step-10.9-post-10.8-step-selection-audit.md
-8a47df9e3395d8ab1c134a30471b13a783f9272714c213c8d7e779e9a9615cbf  docs/step-11.1-agent-management-vertical-slice-audit.md
+1e3dc49924eb3865ad6768462b11067d1050571a116b01c76ae0cb0161d574ed  docs/step-11.1-agent-management-vertical-slice-audit.md
 d861249988b4ef62ecdb4b1b508438abb76c9f421f1b900ae1db0ab1c2d56104  docs/step-11.10-connection-management-vertical-slice-audit.md
 0074bed59e304c2ad02c68b44bf609034f8cd79b8ef28194d708da3b7c1ddb16  docs/step-11.11-connection-management-api.md
 2d664b756fe0cd001cbe8e5ff2b9bc326616de32f78c5bbc6a7cc75cce5a4c14  docs/step-11.12-connection-management-ui.md
@@ -495,8 +495,8 @@ a821414f262415b1f91fe8f1c2047fc7e425db4ca22a52ff9dec90e8959511cd  docs/step-11.2
 90cdbb72fc3c4cc03fb4fa68a0846321f2d85f3d3796faa184dd716e25211761  docs/step-11.3-agent-management-api-implementation.md
 4536f162485c122edd72797ca875c93d4b8babedd4e93668bb07e71c6a96062f  docs/step-11.4-agent-management-api-real-use-audit.md
 58364a4bbebcf009ea05824d3cba4a8f5e16132ec7f7b7dbddaca69cc8f2ca46  docs/step-11.5-agent-management-ui.md
-7f72383c05d385bd5824d8682cb82c0581ffa7e31ed91944b2fb147bc03f24c8  docs/step-11.6-connection-management-vertical-slice-audit.md
-703bce93aa685d2048a592fc0f108f80046f9b55427d1958eca50561797d493f  docs/step-11.7-channel-management-vertical-slice-audit.md
+698f7965e7d5f3d20e4fe3f94536b1968d840fc32a3b4284dd9a9b6fde85dd00  docs/step-11.6-connection-management-vertical-slice-audit.md
+278928ecf30b902aeb80e351ba887d73a7e17c8baa8a4b2e761b1460bcfdd434  docs/step-11.7-channel-management-vertical-slice-audit.md
 dcff418bd377d9d364773019eabfd4506692bfb0b786f6fb48c13583555572c8  docs/step-11.8-channel-management-api.md
 4d74d6fa6a9943b09a4d18a6ae82bd4cc5acbae5f40bb4c2e4f318d43754a162  docs/step-11.9-channel-management-ui.md
 b47e00bcbefbabd2dddc60f0ede4380f7d395b61b06638e3f02325165098e7ba  docs/step-12.8.5-acp-wire-content-classification.md
@@ -520,7 +520,7 @@ de49c3a4dc3398d5856d6d00b70645a1a57a35e6d5784151170aa7243be5825c  docs/step-13.1
 96b3951d6232f29b1f2e860652908a26a400409ec5a1dd7cfae759345afea7d8  docs/step-13.3-interaction-operations-view-implementation-audit.md
 d8f038917dfa441dc95231faa58536302a4745f02b95eae6c3ea46b70085b7b5  docs/step-13.4-minimal-interaction-operations-view.md
 02d9058778c2905812a6283e23e71e31e943fb231e0c2ac7d0c9c44afe40f255  docs/step-13.5-post-13.4-rebaseline-audit.md
-3aaec8f8525d6a807bdb3bb1af787c12162320fb34dd3d29be9df46dfe365cb1  docs/step-14.1-pilot-deployment-baseline-audit.md
+8444a6f2570c3e4116318b79b1a916d9862948bf8a4e6214031672135909697f  docs/step-14.1-pilot-deployment-baseline-audit.md
 9a2210fd0cb2f2fd214cc38d3a3c0ab8a82d8d185a46571191a9f4b4f213496d  docs/step-14.2.2-fresh-sqlite-schema-init.md
 99bc98954fc5fe244fdc0db81575409a80b99bbc51139ebebd739320eaaf06e4  docs/step-14.2.3-a-pilot-runtime-shape-hardening.md
 d4571779216055066dd8fa0190838b22fdff1b679e82490cf09922531099abb4  docs/step-14.2.3-b-minimal-readiness-healthcheck.md

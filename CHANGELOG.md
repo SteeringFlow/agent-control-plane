@@ -7,16 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Changes on `master` after the `0.1.0-rc.10` candidate cut (internal tag
-> `v0.1.0-rc.10`). They form the **next candidate, `0.1.0-rc.11`**, which is
+> Changes on `master` after the `0.1.0-rc.11` candidate cut (public tag
+> `v0.1.0-rc.11` → commit `1c001355…`, carrying the audited OSS export of
+> source `e04ec8a…`). They form the **next candidate, `0.1.0-rc.12`**, which is
 > **not tagged and not published**. The public `v0.1.0-rc.10` prerelease on
 > GitHub was published from a different, earlier snapshot; it must not be
 > reused or overwritten for this candidate.
 
 ### Changed
 
-- **Version identity**: `VERSION` now reads `0.1.0-rc.11` — a candidate
-  version only (no tag, no public release).
+- **Version identity**: `VERSION` now reads `0.1.0-rc.12` — a candidate version
+  only (no tag, no public release).
+
+### Fixed
+
+- **Stale migration-head assertion in the PostgreSQL-mode guard**: the guard
+  that checks "0007 is on the chain" still pinned the chain head to the literal
+  `0008`, so it started failing as soon as migration `0009` (P2 delivery
+  recovery) was added. It now asserts the invariant it always meant to assert —
+  `0007` is present on the current head's ancestor chain, and the head is the
+  chain tip — so later revisions no longer require editing the test.
+- **Single-head / linear-chain / merge-revision checks restored on PostgreSQL**:
+  the closure guard now explicitly asserts that there is exactly one head (no
+  unexpected merge head), keeps the merge-revision rejection, and verifies the
+  exact linear chain `0001 → … → 0009`.
+- **Runtime test aligned with the current explicit Delivery lifecycle contract**:
+  since P1/C1, `RuntimeCoordinator.execute()` covers only the first six stages
+  and external delivery is an explicit seventh stage driven by the application
+  layer (`build_outbound_response` → `deliver`). The PostgreSQL runtime case
+  now drives that real path (via the repository's existing
+  `DeliveringCoordinator` test double) instead of assuming a delivery inside
+  `execute()`. The receiving end is still asserted to receive the expected
+  content, and the unauthorized case still asserts fail-closed behaviour and
+  the frozen failure tuple.
+
+> **Acceptance status (must not be overstated)**: the public `v0.1.0-rc.11`
+> tag was cut from the audited export of source `e04ec8a…`; its GitHub Actions
+> **PostgreSQL** job failed on exactly the three items above (the SQLite job
+> passed). The fixes are verified locally against a real PostgreSQL **17.11**
+> instance. **RC.12 has not passed real CI yet** — final acceptance must come
+> from GitHub Actions on PostgreSQL **16**; local PostgreSQL 17 results are
+> **not** a substitute for that run.
+
+## [0.1.0-rc.11] - 2026-10-28
+
+> Changes on `master` after the `0.1.0-rc.10` candidate cut (internal tag
+> `v0.1.0-rc.10`). They formed the **`0.1.0-rc.11` candidate**, which was
+> tagged publicly as `v0.1.0-rc.11` (annotated → commit `1c001355…`, carrying
+> the audited OSS export of source `e04ec8a…`). **No public prerelease was
+> created for it**: its GitHub Actions PostgreSQL job failed (see the
+> `0.1.0-rc.12` section above), while the SQLite job passed. The public
+> `v0.1.0-rc.10` prerelease on GitHub was published from a different, earlier
+> snapshot; it must not be reused or overwritten.
+
+### Changed
+
+- **Version identity**: `VERSION` read `0.1.0-rc.11` for that candidate (the
+  public tag exists; **no public prerelease was created**).
 - **UI test contracts aligned with the current product behaviour**: the
   diagnosis-mapping invariant now separates the *shared* stages from the
   page-specific `identity_resolution` / `authorization` stages, the

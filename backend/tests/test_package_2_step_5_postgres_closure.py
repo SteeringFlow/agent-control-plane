@@ -7,7 +7,7 @@
 
 本文件负责 ① 中真正需要 PostgreSQL 的部分（SQLite 无法表达）：
 
-    Migration   0001→…→0007 单 head / linear / upgrade 成功 / downgrade 按登记限制
+    Migration   0001→…→0009 单 head / linear / upgrade 成功 / downgrade 按登记限制
     Schema      connection_conversations 符合冻结 DDL（列 / 约束 / 索引 / 复合 FK）
     RLS         ENABLE + FORCE + 策略；tenant A ≠ tenant B（非超级用户角色实测）
     Integrity   wrong tenant / wrong channel / wrong connection / inactive / duplicate
@@ -164,7 +164,7 @@ def _grant_rows(engine, tenant_id: int) -> list[tuple]:
 
 
 def test_migration_chain_is_linear_with_single_head() -> None:
-    """单 head / linear：0001 → … → 0008，且无分支、无 merge。"""
+    """单 head / linear：0001 → … → 0009，且无分支、无 merge。"""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -172,19 +172,21 @@ def test_migration_chain_is_linear_with_single_head() -> None:
     cfg.set_main_option("script_location", str(BACKEND / "alembic"))
     script = ScriptDirectory.from_config(cfg)
 
-    # M6.6-C3 / ADR-12：0008（bootstrap_arms，非授权状态）+ 链仍单根线性
+    # P2（delivery_recovery）：链头推进到 0009；链仍**单根线性**、无意外 merge head
     heads = list(script.get_heads())
-    assert heads == ["0008"], f"head 漂移：{heads}"
+    assert len(heads) == 1, f"必须单 head（无意外 merge head）：{heads}"
+    head = heads[0]
+    assert head == "0009", f"head 漂移：{heads}"
 
     chain: list[str] = []
-    revision = script.get_revision("0008")
+    revision = script.get_revision(head)
     while revision is not None:
         chain.append(revision.revision)
         downs = revision.down_revision
         if isinstance(downs, (list, tuple)):
             raise AssertionError(f"{revision.revision} 是 merge revision：{downs}")
         revision = script.get_revision(downs) if downs else None
-    assert chain == ["0008", "0007", "0006", "0005", "0004", "0003", "0002", "0001"], chain
+    assert chain == ["0009", "0008", "0007", "0006", "0005", "0004", "0003", "0002", "0001"], chain
 
 
 def test_upgrade_head_then_downgrade_0006_then_upgrade_again(pg_engine) -> None:
@@ -451,7 +453,18 @@ def test_backfill_on_empty_database_is_noop_not_failure(pg_engine) -> None:
 
 
 def test_runtime_unbound_identity_with_grant_is_allowed_on_pg(pg_engine) -> None:
-    """★ user_id=NULL 的外部身份 + 有效 grant → 全链 ALLOW（Package 1 × 2 接缝）。"""
+    """★ user_id=NULL 的外部身份 + 有效 grant → 全链 ALLOW（Package 1 × 2 接缝）。
+
+    P1 / C1：`RuntimeCoordinator.execute()` 只覆盖**前六段**
+    （identity → authorization → routing → session_resolution → [session_creation]
+    → agent_dispatch）；外部投递是**显式**的第 7 段，由应用层在「Agent 成功结果
+    已落库之后」发起（`build_outbound_response` → `deliver`）。
+
+    本用例改用仓库既有的 P1 测试替身 `DeliveringCoordinator` 把两段接起来：
+    **不 mock 投递**、不绕过 `build_outbound_response` / `DeliveryExecutor`、
+    不向 sink 直接塞数据——投递仍走真实出站组装与真实 DeliveryExecutor，
+    断言仍是「接收端确实收到预期内容」。
+    """
     from app.application.access_authorization import AccessAuthorizationExecutor
     from app.application.agent_dispatch import AgentDispatchExecutor
     from app.application.coordinator import RuntimeCoordinator
@@ -464,6 +477,7 @@ def test_runtime_unbound_identity_with_grant_is_allowed_on_pg(pg_engine) -> None
     from app.domain.connection_conversation import ConnectionConversation
     from app.domain.inbound_interaction import InboundInteraction
     from app.domain.outbound_response import OutboundResponse
+    from tests.delivery_lifecycle_helper import DeliveringCoordinator
 
     tid = _local_tenant()
     with _uow_factory(pg_engine, tid)() as uow:
@@ -497,7 +511,9 @@ def test_runtime_unbound_identity_with_grant_is_allowed_on_pg(pg_engine) -> None
 
     uow_factory = _uow_factory(pg_engine, tid)
     sink = _Channel()
-    coordinator = RuntimeCoordinator(
+    # P1 / C1：execute() 只到 Dispatch（六段）；第 7 段（投递）由应用层显式发起，
+    # 这里用仓库既有替身把两段接起来（被测语义不变：段序 / 失败传播 / 投递内容）。
+    coordinator = DeliveringCoordinator(RuntimeCoordinator(
         identity_resolution=IdentityResolutionExecutor(uow_factory),
         access_authorization=AccessAuthorizationExecutor(uow_factory),
         routing=RoutingExecutor(uow_factory),
@@ -506,7 +522,7 @@ def test_runtime_unbound_identity_with_grant_is_allowed_on_pg(pg_engine) -> None
         agent_dispatch=AgentDispatchExecutor(
             agent_adapter=_Agent(), uow_factory=uow_factory),
         delivery=DeliveryExecutor(channel_adapter=sink),
-    )
+    ))
     result = coordinator.execute(InboundInteraction(
         channel_id=channel_id, external_interaction_id="pg-1",
         external_conversation_id="G1", external_identity_id="wx_unbound",
