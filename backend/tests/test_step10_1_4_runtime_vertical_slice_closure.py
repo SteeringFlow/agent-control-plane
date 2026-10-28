@@ -54,6 +54,7 @@ from app.domain.inbound_interaction import InboundInteraction
 from app.domain.outbound_response import OutboundResponse
 from app.domain.user import User
 from app.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.delivery_lifecycle_helper import DeliveringCoordinator
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = BACKEND_DIR / "app"
@@ -95,6 +96,15 @@ STAGE_OWN_ERRORS = {
 # 传输 / 协议实现：只允许出现在 adapters 层
 TRANSPORT_ROOTS = {"http", "urllib", "socket", "ssl", "httpx", "requests",
                    "aiohttp", "websockets", "websocket", "grpc"}
+
+# ACP V0.4 Phase 2：**纯解析**模块（零 I/O）——不是「传输实现」。
+# `urllib.parse` 只做 URL 字符串的结构切分，不建连接、不发请求；Runtime Core
+# 的 URI 结构判定需要它。真实传输（`urllib.request` / `http.client` / `socket` …）
+# 仍**全量禁止**，且下面的例外**精确到「文件 + 完整模块名」**。
+PARSE_ONLY_MODULES = {"urllib.parse"}
+CORE_PARSE_ONLY_ALLOWED = {
+    ("app/domain/artifact_uri_policy.py", "urllib.parse"),
+}
 
 
 # ------------------------------------------------------------------ helpers
@@ -212,9 +222,9 @@ def _coordinator_with_trace(db_engine, trace, agent_adapter, channel_adapter):
                                                 uow_factory=uow),
         "delivery": DeliveryExecutor(channel_adapter=channel_adapter),
     }
-    return RuntimeCoordinator(
+    return DeliveringCoordinator(RuntimeCoordinator(
         **{name: _Spy(_STAGE_NAME.get(name, name), ex, trace)
-           for name, ex in inner.items()})
+           for name, ex in inner.items()}))
 
 
 # ================================================================== A. Coordinator 边界
@@ -342,11 +352,23 @@ def test_router_does_not_communicate_with_agent() -> None:
 
 
 def test_runtime_core_has_no_transport_or_protocol() -> None:
-    """Runtime Core（application + domain）无任何传输 / 协议实现。"""
+    """Runtime Core（application + domain）无任何传输 / 协议实现。
+
+    ACP V0.4 Phase 2（精确到**完整模块名**的单点例外）：`urllib.parse` 是**纯解析**、
+    **零 I/O**（不建连接、不发请求），与「传输实现」无关；Runtime Core 的 URI
+    **结构**判定需要它（真实传输 `urllib.request` 等仍**全量禁止**）。
+    例外**仅限** `urllib.parse` 这一个模块，且**仅限**一个 core 文件。
+    """
     files = sorted(APPLICATION_DIR.glob("*.py")) + sorted(DOMAIN_DIR.glob("*.py"))
     for py in files:
         roots = _roots(py.read_text(encoding="utf-8"))
-        hit = sorted(r for r in roots if r.split(".")[0] in TRANSPORT_ROOTS)
+        rel = py.relative_to(BACKEND_DIR).as_posix()
+        hit = sorted(
+            r for r in roots
+            if r.split(".")[0] in TRANSPORT_ROOTS
+            and not (r in PARSE_ONLY_MODULES
+                     and (rel, r) in CORE_PARSE_ONLY_ALLOWED)
+        )
         assert not hit, f"Runtime Core 出现传输依赖 {py.name}：{hit}"
 
 
@@ -357,11 +379,16 @@ def test_protocol_implementation_lives_only_in_adapter_layer() -> None:
 
     白名单随「已实现的传输 Adapter」同步增长——这正是本守卫的语义：新增传输
     必须落在 adapters 层，而不是放开纪律。
+
+    ACP V0.4 Phase 2：**纯解析**模块（`urllib.parse`，零 I/O）**不构成**传输归属
+    ——它不建连接、不发请求；真实传输（`urllib.request` / `http.client` / `socket` …）
+    仍**必须**落在 adapters 层（下方白名单因此保持不变）。
     """
     owners = []
     for py in APP_DIR.rglob("*.py"):
         roots = _roots(py.read_text(encoding="utf-8"))
-        if any(r.split(".")[0] in TRANSPORT_ROOTS for r in roots):
+        if any(r.split(".")[0] in TRANSPORT_ROOTS and r not in PARSE_ONLY_MODULES
+               for r in roots):
             owners.append(py.name)
     assert sorted(owners) == ["acp.py", "wecom.py", "wecom_bot.py",
                               "workbuddy.py"], owners
@@ -383,20 +410,35 @@ def test_dispatch_calls_only_injected_adapter() -> None:
 
 
 def test_outbound_construction_is_minimal() -> None:
-    """OutboundResponse 构造面 = 4 个冻结字段，不带任何内部 id。"""
-    tree = ast.parse(_src("app/application/coordinator.py"))
+    """OutboundResponse 构造面 = 5 个冻结字段，不带任何内部 id。
+
+    ACP V0.3 Phase 1：+ `artifacts`（Agent 产出的**引用**——非内部 id；
+    契约见 docs/step-acp-v0.3-artifact-outbound-implementation-gate.md §1.2.2）。
+
+    **P1 / C1**：构造点从 Coordinator 移到 Delivery 模块的纯函数
+    `build_outbound_response`（出站组装成为应用层在结果落库后发起的显式步骤，
+    且只有**一份**实现）——故断言对象改为该模块。
+    """
+    tree = ast.parse(_src("app/application/delivery.py"))
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
              and isinstance(n.func, ast.Name) and n.func.id == "OutboundResponse"]
     assert len(calls) == 1
     kwargs = {k.arg for k in calls[0].keywords}
     assert kwargs == {"channel_id", "external_conversation_id", "content",
-                      "metadata"}, kwargs
+                      "metadata", "artifacts"}, kwargs
 
 
 def test_delivery_depends_only_on_channel_adapter() -> None:
-    """Delivery 只依赖 ChannelAdapter Port：不读库（无 UoW / Repository）。"""
+    """Delivery 只依赖 ChannelAdapter Port：不读库（无 UoW / Repository）。
+
+    **P1 / C1**：Delivery 模块新增**纯函数** `build_outbound_response`
+    （出站信封组装），故多两个 domain 依赖——仍**不**引入任何 I/O / 仓储。
+    """
     assert _roots(_src("app/application/delivery.py")) == {
-        "app.application.errors", "app.domain.outbound_response",
+        "app.application.errors", "app.domain.agent_response",
+        # P2.1：artifact 引用快照的还原需要 `Artifact` 领域对象
+        "app.domain.artifact",
+        "app.domain.inbound_interaction", "app.domain.outbound_response",
         "app.repositories.channel_adapter"}
 
 

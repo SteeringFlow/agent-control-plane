@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import queue
 import threading
 import time
@@ -74,6 +75,8 @@ from app.domain.agent_probe_snapshot import AgentProbeSnapshot
 from app.domain.agent_request import AgentRequest
 from app.domain.agent_response import AgentResponse
 from app.domain.connection import Connection
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_S = 30.0
 
@@ -458,10 +461,18 @@ class ACPAdapter:
     def _send_minimal(
         self, request: AgentRequest, connection: Connection,
     ) -> AgentResponse:
+        # P0 观测：minimal binding 的单段耗时（**只记录，不改变任何行为**）。
+        started_at = time.monotonic()
         endpoint, timeout_s = self._endpoint_and_timeout(request, connection)
         headers, body = self._compose_acp_request(request, connection)
         raw = self._http_post(request, connection, endpoint, headers, body, timeout_s)
-        return self._normalize_acp_response(request, connection, raw)
+        response = self._normalize_acp_response(request, connection, raw)
+        LOGGER.info(
+            "acp minimal send timing: agent_id=%s connection_id=%s timeout_s=%.3f "
+            "total_ms=%d",
+            request.agent_id, connection.id, timeout_s,
+            int((time.monotonic() - started_at) * 1000))
+        return response
 
     # ------------------------------------------------------------------ Tencent ACP SSE binding（10.1.3）
 
@@ -549,10 +560,28 @@ class ACPAdapter:
 
         reader = threading.Thread(target=_sse_reader, daemon=True)
         reader.start()
+        # P0 观测：分段耗时（**只记录，不改变任何超时/重试/调度行为**）。
+        # 目的：定位「实际耗时超出名义预算（timeout_s × 阶段数）」的具体环节。
+        started_at = time.monotonic()
+        stage_started = time.monotonic()
         if not ready.wait(timeout=timeout_s):
+            LOGGER.warning(
+                "acp tencent sse stage exceeded budget: stage=ready agent_id=%s "
+                "connection_id=%s timeout_s=%.3f waited_ms=%d",
+                request.agent_id, connection.id, timeout_s,
+                int((time.monotonic() - stage_started) * 1000))
             raise AgentDispatchFailedError(
                 agent_id=request.agent_id, connection_id=connection.id)
+        ready_ms = int((time.monotonic() - stage_started) * 1000)
+        LOGGER.info(
+            "acp tencent sse stage timing: stage=ready agent_id=%s connection_id=%s "
+            "timeout_s=%.3f waited_ms=%d",
+            request.agent_id, connection.id, timeout_s, ready_ms)
         if errors:
+            LOGGER.warning(
+                "acp tencent sse stage failed: stage=ready agent_id=%s "
+                "connection_id=%s error_count=%d waited_ms=%d",
+                request.agent_id, connection.id, len(errors), ready_ms)
             raise AgentDispatchFailedError(
                 agent_id=request.agent_id, connection_id=connection.id)
 
@@ -566,6 +595,7 @@ class ACPAdapter:
                 "prompt": [{"type": "text", "text": request.content}],
             },
         }
+        post_started = time.monotonic()
         try:
             post_conn = _open_http_connection(scheme, host, port, timeout_s)
             try:
@@ -586,18 +616,39 @@ class ACPAdapter:
             finally:
                 post_conn.close()
         except AgentDispatchFailedError:
+            LOGGER.warning(
+                "acp tencent sse stage failed: stage=post agent_id=%s "
+                "connection_id=%s waited_ms=%d",
+                request.agent_id, connection.id,
+                int((time.monotonic() - post_started) * 1000))
             raise
         except Exception as exc:  # noqa: BLE001
+            LOGGER.warning(
+                "acp tencent sse stage failed: stage=post agent_id=%s "
+                "connection_id=%s waited_ms=%d error=%s",
+                request.agent_id, connection.id,
+                int((time.monotonic() - post_started) * 1000), type(exc).__name__)
             raise AgentDispatchFailedError(
                 agent_id=request.agent_id, connection_id=connection.id) from exc
+        post_ms = int((time.monotonic() - post_started) * 1000)
+        LOGGER.info(
+            "acp tencent sse stage timing: stage=post agent_id=%s connection_id=%s "
+            "timeout_s=%.3f waited_ms=%d",
+            request.agent_id, connection.id, timeout_s, post_ms)
 
         # ---- 3. 收集 SSE 事件直到 final / EOF / 超时 ----
         parts: list[str] = []
         deadline = time.monotonic() + timeout_s
         finished = False
         timed_out = False
+        collect_started = time.monotonic()
         while True:
             if errors:
+                LOGGER.warning(
+                    "acp tencent sse stage failed: stage=collect agent_id=%s "
+                    "connection_id=%s waited_ms=%d error_count=%d",
+                    request.agent_id, connection.id,
+                    int((time.monotonic() - collect_started) * 1000), len(errors))
                 raise AgentDispatchFailedError(
                     agent_id=request.agent_id, connection_id=connection.id)
             remaining = deadline - time.monotonic()
@@ -618,12 +669,26 @@ class ACPAdapter:
                     pass
             final, texts, error = _sse_event_texts_and_final(item)
             if error is not None:
+                LOGGER.warning(
+                    "acp tencent sse stage failed: stage=collect agent_id=%s "
+                    "connection_id=%s waited_ms=%d reason=sse_event_error",
+                    request.agent_id, connection.id,
+                    int((time.monotonic() - collect_started) * 1000))
                 raise AgentDispatchFailedError(
                     agent_id=request.agent_id, connection_id=connection.id)
             parts.extend(texts)
             if final:
                 finished = True
                 break
+
+        collect_ms = int((time.monotonic() - collect_started) * 1000)
+        total_ms = int((time.monotonic() - started_at) * 1000)
+        LOGGER.info(
+            "acp tencent sse stage timing: stage=collect agent_id=%s "
+            "connection_id=%s timeout_s=%.3f waited_ms=%d text_parts=%d "
+            "finished=%s timed_out=%s total_ms=%d",
+            request.agent_id, connection.id, timeout_s, collect_ms, len(parts),
+            finished, timed_out, total_ms)
 
         # 关闭 GET 连接（解阻塞 reader 线程）
         sse_conn = sse_holder.get("conn")
@@ -645,12 +710,20 @@ class ACPAdapter:
 
         # reader 侧任何 transport 错误（含 SSE 建连后 socket 超时）→ Fail Closed
         if errors:
+            LOGGER.warning(
+                "acp tencent sse stage failed: stage=collect agent_id=%s "
+                "connection_id=%s waited_ms=%d error_count=%d",
+                request.agent_id, connection.id, collect_ms, len(errors))
             raise AgentDispatchFailedError(
                 agent_id=request.agent_id, connection_id=connection.id)
 
         # Fail Closed：超时未以 final/EOF 收尾 = 未完成，绝不返回半成品；
         # EOF 自然收尾但无任何文本 = 归一 content="" 交由 Dispatch 判无效。
         if timed_out:
+            LOGGER.warning(
+                "acp tencent sse stage exceeded budget: stage=collect agent_id=%s "
+                "connection_id=%s timeout_s=%.3f waited_ms=%d total_ms=%d",
+                request.agent_id, connection.id, timeout_s, collect_ms, total_ms)
             raise AgentDispatchFailedError(
                 agent_id=request.agent_id, connection_id=connection.id)
 

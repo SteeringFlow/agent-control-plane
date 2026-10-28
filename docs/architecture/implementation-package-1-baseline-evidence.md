@@ -151,7 +151,8 @@ PG Closure Evidence                         = PENDING（环境矩阵的最后一
 
 ```powershell
 # 基线 worktree（pre-Package-1 + 当前 WIP 文件）
-cd e:/Xiangdong/StudyDemo/Agent-Control-Plane
+# 在仓库根目录执行（本文件使用相对路径，不暴露任何本机目录结构）
+cd <repo-root>
 git worktree add --detach ../acp-baseline-worktree f43689a^
 Copy-Item backend/app/adapters/channels/wecom_bot.py ../acp-baseline-worktree/backend/app/adapters/channels/wecom_bot.py -Force
 Copy-Item backend/tests/test_3b_2_2_wecom_bot_websocket_transport.py ../acp-baseline-worktree/backend/tests/ -Force
@@ -160,7 +161,7 @@ Copy-Item backend/tests/test_3b_3_3_wecom_bot_group_chat.py ../acp-baseline-work
 # A/B
 cd ../acp-baseline-worktree/backend
 python -m pytest tests/test_3b_2_2_wecom_bot_websocket_transport.py tests/test_3b_3_3_wecom_bot_group_chat.py -q --basetemp="$env:TEMP\acp_bl"
-cd e:/Xiangdong/StudyDemo/Agent-Control-Plane/backend
+cd <repo-root>/backend
 python -m pytest tests/test_3b_2_2_wecom_bot_websocket_transport.py tests/test_3b_3_3_wecom_bot_group_chat.py -q --basetemp="$env:TEMP\acp_p1"
 
 # 清理（本文件写完后已执行）

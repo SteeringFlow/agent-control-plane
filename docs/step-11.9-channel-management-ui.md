@@ -1,5 +1,7 @@
 # Step 11.9 — Channel Management UI
 
+> **OSS 发布说明**：本文为历史实现记录；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 > **严格对齐 11.5（Agent UI）的第二条 Management UX Vertical Slice。**
 > 顺序裁决（用户 11.9）：先 Channel UI、后 Connection——因为 Connection 的
 > API/UI 需要引用 Channel，而 Channel 的 4 条管理 API（11.8）已经就绪，

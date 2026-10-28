@@ -222,11 +222,16 @@ def test_c1_full_outbound_chain_via_runtime(db_engine, wecom_api) -> None:
     """RuntimeCoordinator → DeliveryExecutor → WeComAdapter.deliver → Fake WeCom API。"""
     channel_id = _seed(db_engine, wecom_api)
     wecom = WeComAdapter(uow_factory=_uow_factory(db_engine))
+    from app.application.delivery import build_outbound_response
     from app.domain.inbound_interaction import InboundInteraction
-    _build_runtime(db_engine, wecom).execute(InboundInteraction(
+    inbound = InboundInteraction(
         channel_id=channel_id, external_interaction_id="i-1",
         external_conversation_id="zhangsan", external_identity_id="zhangsan",
-        content="请总结今天的会话要点"))
+        content="请总结今天的会话要点")
+    # P1 / C1：投递是**显式**的第 7 段（execute() 只到 Dispatch）。
+    coordinator = _build_runtime(db_engine, wecom)
+    result = coordinator.execute(inbound)
+    coordinator.deliver(build_outbound_response(inbound, result.agent_response))
 
     # Fake API 真实收到 message/send：recipient/agentid/content 映射正确
     assert len(wecom_api.send_requests) == 1

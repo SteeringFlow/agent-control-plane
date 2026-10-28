@@ -55,15 +55,22 @@ BACKEND = Path(__file__).resolve().parents[1]
 
 
 class _OkRuntime:
-    """成功 Runtime：记录调用次数（e 区端到端用）。"""
+    """成功 Runtime：记录调用次数（e 区端到端用）。
+
+    P1 / C1：投递是显式的第 7 段（由应用层在结果落库后发起）。
+    """
 
     def __init__(self, result: RuntimeExecutionResult) -> None:
         self.result = result
         self.calls = 0
+        self.deliveries: list = []
 
     def execute(self, inbound: InboundInteraction) -> RuntimeExecutionResult:
         self.calls += 1
         return self.result
+
+    def deliver(self, outbound) -> None:
+        self.deliveries.append(outbound)
 
 
 def _uow_factory(db_engine) -> Callable[[], SqlAlchemyUnitOfWork]:
@@ -379,12 +386,29 @@ def test_d1_old_attempt_cannot_write_through_new_attempt(db_engine) -> None:
                for t, _, _ in _activities(db_engine, iid))
 
     # 5) B outcome(T2) → COMMITTED，终态由 B 落定
+    #    P1 / C3：成功被拆为「Agent 成功」（落结果）与「投递成功」两个 phase。
     result = RuntimeExecutionResult(
         session_mode=REUSE_ACTIVE, session_id=g["session"],
         agent_response=AgentResponse(content="ok"))
-    b_commit = phases.record_success(iid, result, expected_started_at=t2)
+    b_commit = phases.record_agent_success(iid, result, expected_started_at=t2)
     assert b_commit is OutcomeCommit.COMMITTED
 
+    row = _row(db_engine, iid)
+    assert (row.processing_status, row.delivery_status) == ("succeeded",
+                                                            "pending")
+    assert row.processing_started_at == t2
+
+    # 6) 投递终态单独落定（processing 不被改写）
+    #    P2：投递终态的围栏是 **attempt 身份**（delivering ∧ attempts=我的号）
+    #    ⇒ 先取得投递权（统一 claim 闸门），再落终态
+    with _uow_factory(db_engine)() as uow:
+        attempt = uow.interactions.claim_delivery(
+            iid, max_attempts=3, lease_seconds=300)
+        uow.commit()
+    assert attempt == 1
+    assert phases.record_outbound_success(
+        iid, session_id=g["session"], expected_delivery_attempts=1) \
+        is OutcomeCommit.COMMITTED
     row = _row(db_engine, iid)
     assert (row.processing_status, row.delivery_status) == ("succeeded",
                                                             "delivered")
@@ -407,7 +431,7 @@ def test_d2_old_attempt_success_is_equally_rejected(db_engine) -> None:
     result = RuntimeExecutionResult(
         session_mode=REUSE_ACTIVE, session_id=g["session"],
         agent_response=AgentResponse(content="stale"))
-    assert phases.record_success(
+    assert phases.record_agent_success(
         iid, result, expected_started_at=t1) is OutcomeCommit.REJECTED
 
     row = _row(db_engine, iid)

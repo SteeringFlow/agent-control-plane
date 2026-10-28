@@ -89,15 +89,22 @@ RECLAIM_THRESHOLD_S = 0
 
 
 class _OkRuntime:
-    """成功 Runtime（真实 Core 用）：记录执行次数与收到的 inbound。"""
+    """成功 Runtime（真实 Core 用）：记录执行次数与收到的 inbound。
+
+    P1 / C1：投递是显式的第 7 段（由应用层在结果落库后发起）。
+    """
 
     def __init__(self, result: RuntimeExecutionResult) -> None:
         self.result = result
         self.calls = 0
+        self.deliveries: list = []
 
     def execute(self, inbound: InboundInteraction) -> RuntimeExecutionResult:
         self.calls += 1
         return self.result
+
+    def deliver(self, outbound) -> None:
+        self.deliveries.append(outbound)
 
 
 class _DeadWorker:
@@ -354,7 +361,7 @@ def test_4_late_outcome_from_old_attempt_is_rejected(db_engine) -> None:
     assert row_after_b.processing_started_at != t1
 
     # Worker A 复活，带着 T1 迟到落 outcome
-    late = phases.record_success(
+    late = phases.record_agent_success(
         interaction_id, _ok_result(g["session"], "from-A"),
         expected_started_at=t1)
 

@@ -1,5 +1,7 @@
 # Step 13.4 — Minimal Interaction Operations View
 
+> **OSS 发布说明**：本文为历史实现记录；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 > **纯前端 Vertical Slice。** 后端改动：**0 行**——只消费 13.1 已落地的三个 GET 端点。
 > 交付物 = 本报告 + `frontend/interactions.html` + `frontend/interactions.js`
 > + 现有 5 页 topbar 导航各 +1 条 + `styles.css` 语义化微调（纯视觉，零语义）。

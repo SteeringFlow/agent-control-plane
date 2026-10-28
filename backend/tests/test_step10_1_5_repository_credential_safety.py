@@ -72,10 +72,12 @@ def _repo_provenance() -> str:
 # .env.example 的完整白名单：SAFE TEMPLATE 的每一行都必须精确命中这里。
 # 新增键时必须显式更新本表（值为空串 = 该键只提供键名、不含任何秘密）。
 ENV_EXAMPLE_WHITELIST = {
-    # 14.2.3.C.2：模板与 Settings 字段面一一对齐（9 键 = 9 字段）；
+    # 14.2.3.C.2：模板与 Settings 字段面一一对齐（10 键 = 10 字段）；
     # DATABASE_URL 与 Pilot 持久化路径统一为 ./data/agent_control_plane.db。
     # TENCENT_* 属 env-gated live test 的 test-only 配置，**不在**本模板。
     # Cloud-0.1.1-C：+ AUTH_REQUIRED（Browser Auth 唯一开关，默认 false = OSS 行为不变）。
+    # P0（Delivery 可靠性）：+ WECOM_BOT_ACK_WAIT_TIMEOUT_SECONDS
+    # （ACK 等待窗口，默认 10.0 = 既有硬编码常量逐字搬来，零行为变化）。
     "APP_NAME": "Agent Control Plane",
     "ENVIRONMENT": "development",
     "DATABASE_URL": "sqlite:///./data/agent_control_plane.db",
@@ -85,6 +87,14 @@ ENV_EXAMPLE_WHITELIST = {
     "DRIVER_RECLAIM_EVERY": "30",
     "DRIVER_STALE_THRESHOLD_SECONDS": "300",
     "DRIVER_BACKOFF_INTERVAL_SECONDS": "5.0",
+    "WECOM_BOT_ACK_WAIT_TIMEOUT_SECONDS": "10.0",
+    # P2 Delivery Recovery（默认关闭；runbook 见 docs/step-p2-*.md）
+    "RECOVERY_ENABLED": "false",
+    "RECOVERY_POLL_INTERVAL_SECONDS": "10.0",
+    "RECOVERY_PICKUP_LIMIT": "10",
+    "RECOVERY_RECLAIM_EVERY": "30",
+    "RECOVERY_LEASE_SECONDS": "300",
+    "RECOVERY_MAX_ATTEMPTS": "3",
 }
 
 

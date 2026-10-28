@@ -289,8 +289,13 @@ def test_b2_success_path_has_no_middle_stage_evidence(db_engine) -> None:
 
 
 def test_b3_failure_path_evidence(db_engine) -> None:
-    """失败路径：received + stage_failure（stage=delivery，含 failure_code /
-    retryable metadata），无 interaction_completed——终点即失败点。"""
+    """失败路径：received + session_created + stage_failure（stage=delivery，
+    含 failure_code / retryable metadata），无 interaction_completed。
+
+    **P1 / C3**：Agent 成功结果先落库 ⇒ CREATE_NEW 的 session_created Evidence
+    在**投递之前**就已写入（此前它与成功终态同批写入，投递失败时整段丢失）。
+    失败 Evidence 本身**不变**（stage=delivery + failure_code/retryable）。
+    """
     g = _seed(db_engine)
     with pytest.raises(ChannelDeliveryFailedError):
         _wrapped_runtime(db_engine,
@@ -300,13 +305,16 @@ def test_b3_failure_path_evidence(db_engine) -> None:
     row = next(r for r in _interaction_rows(db_engine)
                if r.external_interaction_id == "msg-df")
     acts = _activity_rows(db_engine, row.id)
-    assert [a.type for a in acts] == [ACTIVITY_RECEIVED, ACTIVITY_STAGE_FAILURE]
+    assert [a.type for a in acts] == [
+        ACTIVITY_RECEIVED, ACTIVITY_SESSION_CREATED, ACTIVITY_STAGE_FAILURE]
     failure = acts[-1]
     assert failure.stage == "delivery"
     assert failure.status == "failed"
     assert failure.message                                  # 失败原因文本
     assert failure.extra_metadata == {
-        "failure_code": "CHANNEL_DELIVERY_FAILED", "retryable": True}
+        "failure_code": "CHANNEL_DELIVERY_FAILED", "retryable": True,
+        # P2：结果已知性（True = 可确认未送达 ⇒ 可进重投白名单）
+        "outcome_known": True}
     assert failure.session_id == row.session_id             # Evidence 挂对 Session
 
 
@@ -373,6 +381,9 @@ def test_c2_read_path_is_absent_at_repository_level() -> None:
         "create", "claim_processing", "record_outcome", "get_by_id",
         "find_by_channel_and_external_id", "find_pending",
         # 12.9.4.12 attempt fence：PROCESSING 孤儿回收（只回收，不做幂等决策）
+        # P2：投递级三方法（claim_delivery / find_undelivered /
+        # reclaim_stale_delivery）——G3 已批准的投递恢复能力。
+        "claim_delivery", "find_undelivered", "reclaim_stale_delivery",
         "reclaim_stale_processing",
         # 13.1 Observability：有界陈列读（最新在前，纯读）
         "list_recent"}
@@ -414,7 +425,7 @@ def test_c3_raw_join_answers_all_questions(db_engine) -> None:
     assert interaction.processing_status == "succeeded"
     assert interaction.delivery_status == "failed"
     assert interaction.failure_stage == "delivery"
-    assert len(acts) == 2                         # received + stage_failure
+    assert len(acts) == 3         # received + session_created + stage_failure（P1/C3）
 
 
 # ================================================================== D. 不引入的东西

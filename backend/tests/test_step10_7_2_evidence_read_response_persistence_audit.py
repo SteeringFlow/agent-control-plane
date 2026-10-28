@@ -287,7 +287,8 @@ def test_b1_response_payload_lands_on_full_success_only(db_engine) -> None:
         "metadata": {"latency_ms": 42},
         "artifacts": None,
     }
-    assert df.response_payload is None               # Case B：仍无承载物（诚实记录）
+    assert df.response_payload is not None            # P1/C3
+    assert df.response_payload["content"] == "echo:hello"
     assert dp.response_payload is None               # 响应从未诞生（语义上应保持 NULL）
 
 

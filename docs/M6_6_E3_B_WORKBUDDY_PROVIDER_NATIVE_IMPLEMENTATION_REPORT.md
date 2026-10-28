@@ -1,5 +1,7 @@
 # M6.6-E3-B — WorkBuddy Provider-native Adapter Implementation Report
 
+> **OSS 发布说明**：本文为历史实现报告；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 > 前序：
 > - `M6.6-D Provider Adapter & Real First Success Audit` — CONDITIONAL PASS（F3/F4 = WorkBuddy GAP）
 > - `M6.6-E3-A WorkBuddy Provider-native Feasibility Audit` — CONDITIONAL PASS（可行，Core + Adapter 边界足以支撑）

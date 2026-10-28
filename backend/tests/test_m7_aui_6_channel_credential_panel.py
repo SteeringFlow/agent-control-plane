@@ -332,9 +332,12 @@ function snap() {
   patchStatus = 200;
 
   // ---- A2：全新渠道（首次接入 = POST）----
+  // M7-AUI-10.4 契约：「编辑」入口 = existing 模式（**绝不当作新建**）；新建只经
+  // 「+ 添加渠道」（openNewChannelPanel → mode="new"）。因此 A2 必须走**添加入口**，
+  // 用编辑入口模拟新建永远不会产生 POST（本用例此前即因此失败）。
   channels = [];
   await t.refresh();
-  openChannel();
+  els["cta-add-channel"].handlers.click();
   calls.length = 0;
   els["pc-bot-id"].value = "bot-new";
   els["pc-bot-secret"].value = "secret-new";

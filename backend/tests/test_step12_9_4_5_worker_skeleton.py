@@ -54,17 +54,25 @@ BACKEND = Path(__file__).resolve().parents[1]
 
 
 class _OkRuntime:
-    """成功 Runtime：记录调用次数与收到的 inbound。"""
+    """成功 Runtime：记录调用次数与收到的 inbound。
+
+    P1 / C1：Runtime 的执行链止于 Dispatch；**投递**是显式的第 7 段
+    （`deliver()`），由应用层在结果落库之后发起——故本替身需实现它。
+    """
 
     def __init__(self, result: RuntimeExecutionResult) -> None:
         self.result = result
         self.calls = 0
         self.inbounds: list[InboundInteraction] = []
+        self.deliveries: list[OutboundResponse] = []
 
     def execute(self, inbound: InboundInteraction) -> RuntimeExecutionResult:
         self.calls += 1
         self.inbounds.append(inbound)
         return self.result
+
+    def deliver(self, outbound: OutboundResponse) -> None:
+        self.deliveries.append(outbound)
 
 
 class _RaisingRuntime:
@@ -275,10 +283,21 @@ def test_b4_two_workers_race_only_one_executes(db_engine) -> None:
 
 
 def test_c1_worker_owns_the_runtime_execution_callsite() -> None:
-    """Worker 直接持有 runtime 并在 process 中调用 execute。"""
-    src = (BACKEND / "app" / "application" / "worker.py").read_text(
+    """Worker 直接持有 runtime 并在 process 中驱动执行。
+
+    P1 / C1：执行的**调用点**仍在应用层——Worker 直接调用 runtime 的执行段，
+    随后由持久化层的编排方法（`record_agent_success_and_deliver`）完成
+    「结果落库 → 投递 → 投递结果落定」。
+    """
+    worker_src = (BACKEND / "app" / "application" / "worker.py").read_text(
         encoding="utf-8")
-    assert "self._runtime.execute(" in src
+    recording_src = (BACKEND / "app" / "application" / "interaction_recording.py") \
+        .read_text(encoding="utf-8")
+    assert "self._runtime.execute(" in worker_src
+    assert "record_agent_success_and_deliver" in worker_src
+    # 编排在持久化层（Worker 与同步路径共用同一份顺序）
+    assert "def record_agent_success_and_deliver(" in recording_src
+    assert "runtime.deliver(" in recording_src
 
 
 def test_c2_channel_inbound_service_has_no_runtime_capability() -> None:

@@ -254,7 +254,8 @@ def test_a2_inbound_interaction_is_not_a_persisted_identity() -> None:
 def test_a3_outbound_response_carries_no_interaction_identity() -> None:
     """出站侧不含 external_interaction_id —— 投递出去的消息无法回链来源事件。"""
     names = {f.name for f in fields(OutboundResponse)}
-    assert names == {"channel_id", "external_conversation_id", "content", "metadata"}
+    assert names == {"channel_id", "external_conversation_id", "content",
+                     "metadata", "artifacts"}
     assert "external_interaction_id" not in names
 
 
@@ -275,6 +276,9 @@ def test_a4_response_payload_writer_appears_with_10_8_4() -> None:
         "persistence/repositories/interaction_record.py",  # 10.8.4 Adapter 落列
         "api/management/interactions.py",             # 13.1 只读回显（docstring）
         "schemas/interactions.py",                    # 13.1 只读回显（响应字段）
+        # P2：投递恢复从**已落库**的 response_payload 重建出站信封（只读引用）
+        "application/delivery.py",
+        "application/delivery_recovery.py",
     }
 
 

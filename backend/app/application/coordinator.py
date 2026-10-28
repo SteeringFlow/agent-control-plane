@@ -18,9 +18,15 @@
                                             ▼
                                     AgentDispatchExecutor → AgentResponse
                                             ▼
-                                    OutboundResponse → DeliveryExecutor
-                                            ▼
                                     RuntimeExecutionResult（10.8.2 薄契约）
+                                            │
+        ┌───────────────────────────────────┘
+        │  **P1 / C1**：Delivery **不再**在 execute() 内部同步发生。
+        │  应用层（AgentDeliveryLifecycle）在**结果落库之后**显式发起：
+        │      build_outbound_response(inbound, agent_response)
+        │          → OutboundResponse → DeliveryExecutor
+        ▼
+                                    （投递结果单独记录：processing ≠ delivery）
 
 **Coordinator 是 Orchestrator，不是 Domain Service**：它只知道「先调用谁 / 拿到什么 /
 下一步调用谁 / 失败在哪里停止」——不知道如何找 Identity / 判定许可 / 选 Connection /
@@ -35,6 +41,24 @@ RuntimeFailed——各 Executor 抛出的 typed ApplicationError 原样向上传
     Agent Dispatch 失败 → STOP（Delivery 不被调用）
     Delivery 失败 → 在 Dispatch 成功之后抛 ChannelDeliveryFailedError
     （processing 仍 SUCCESS、delivery = FAILED 的语义归持久化层，见 4.2/5.3）
+
+**P1 / C1：Delivery 与 Runtime 的解耦（本类的唯一行为变化）**
+
+以前：execute() 内部同步完成「Dispatch → 组装 Outbound → Delivery」
+      ⇒ 投递失败会**连带丢掉** Agent 已生成的结果（生产实证：
+        该场景的响应快照恒为 NULL）。
+
+现在：execute() 只到 **Dispatch**（六段）即返回 RuntimeExecutionResult；
+      出站组装与外部投递由**应用层**在「Agent 成功结果已落库之后」显式发起：
+
+          result  = runtime.execute(...)               # 六段，无外部 I/O
+          persist_agent_success(result)                 # 响应快照落库
+          outbound = build_outbound_response(inbound, result.agent_response)
+          runtime.deliver(outbound)                     # 外部 I/O（事务之外）
+          persist_outcome(...)                         # 投递终态单独记录
+
+段序（identity → … → agent_dispatch → delivery）**未变**；改变的只是
+「投递由谁、在什么时点发起」。
 
 **None 不是控制流协议**：各 Executor 成功都返回 typed domain 结果，失败抛 typed
 error——本模块不出现 `if result is None: ...` 的模糊分支；Session 分支只按
@@ -152,30 +176,34 @@ class RuntimeCoordinator(RuntimeExecutionCoordinator):
             routing_result, control_plane_session_id, inbound.content,
             external_session_id=decision.external_session_id)
 
-        # 7) Delivery —— 形成 OutboundResponse 并交还 Channel
-        #
-        # 12.8.2 metadata 传播（**channel-originated 优先**）：
-        #   Agent metadata 先展开、inbound（Channel）metadata 后展开 —— 后者自然
-        #   覆盖同名 key，因此 Channel 侧交付上下文（如智能机器人 response_url）
-        #   **绝不会被 Agent 输出覆盖**；Agent 侧只能补充新 key。
-        #   两侧皆空 → `{} or None` → None（保持既有「无 metadata」语义）。
-        # 写法约束：Coordinator 纯度守卫禁止任何额外调用（无 helper / 无
-        #   isinstance / 无 .items），故用字典解包这一零调用形式表达同一语义。
-        metadata = {**(response.metadata or {}), **(inbound.metadata or {})}
-        outbound = OutboundResponse(
-            channel_id=inbound.channel_id,
-            external_conversation_id=inbound.external_conversation_id,
-            content=response.content,
-            metadata=metadata or None,
-        )
-        self._delivery.execute(outbound)
-
-        # 8) Result —— 10.8.2 薄结果契约（10.8.1 A 裁决的三事实）：
+        # 7) Result —— 10.8.2 薄结果契约（10.8.1 A 裁决的三事实）：
         #    REUSE_ACTIVE → existing session.id / CREATE_NEW → newly created
         #    session.id（二者已统一为 control_plane_session_id，绝不 None）；
         #    AgentResponse 直接进入 Result（响应级事实的唯一数据源，10.7.2 B）。
+        #
+        #    **P1 / C1：Delivery 不再是本方法的一部分**——外部投递由应用层在
+        #    **持久化 Agent 成功结果之后**显式发起（见本类 `deliver()`）。
+        #    段序本身未变（delivery 仍是最后一段），改变的只是**发起方**：
+        #    以前「投递」在 Runtime 内部同步发生 → 投递失败会连带**丢掉**
+        #    Agent 已生成的结果（生产实证：该场景的响应快照恒为 NULL）；
+        #    现在结果先落库，投递结果**单独**记录（processing ≠ delivery）。
         return RuntimeExecutionResult(
             session_mode=decision.mode,
             session_id=control_plane_session_id,
             agent_response=response,
         )
+
+    # ------------------------------------------------------------------ 显式投递
+
+    def deliver(self, outbound: OutboundResponse) -> None:
+        """执行一次外部投递（C1：第 7 段的**显式**入口）。
+
+        由**应用层**在「Agent 成功结果已持久化」之后调用（`AgentDeliveryLifecycle`
+        编排：persist → build_outbound_response → deliver → 记录投递结果）。
+
+        本方法只做一件事：把出站消息交给既有的 `DeliveryExecutor`
+        （Delivery is transport, not routing——不重新选路、不重新解析身份/会话）。
+        投递失败照旧抛 `ChannelDeliveryFailedError`（由调用方**单独**记录为
+        delivery=FAILED，**不回滚**已持久化的 Agent 结果、不改写 processing）。
+        """
+        self._delivery.execute(outbound)

@@ -32,7 +32,17 @@ Dispatch 的失败路径由 Persistence Wrapper 回填，前段失败保持 NULL
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.sqlite import DATETIME as SQLiteDateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -79,6 +89,22 @@ class InteractionModel(Base):
             SQLiteDateTime(timezone=True, truncate_microseconds=True), "sqlite"),
         nullable=True,
     )
+    # P2 Delivery Lifecycle（三列，均为**附加式**，不改既有列语义）：
+    # - delivery_attempts：投递尝试次数的**单调计数** = 投递写入围栏身份
+    #   （**不用时间戳等式**：SQLite 秒级精度会碰撞，见上）；
+    # - delivery_started_at：投递尝试的**持有起点**（DB 时钟写入，过期回收写 NULL）；
+    # - delivery_protocol：**协议世代**（0 = 历史/未知协议 ⇒ 禁止自动重投；
+    #   1 = 新协议状态机）。0 语义让历史行的 `attempts=0` **不能**被误读为
+    #   「从未发送」。
+    delivery_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0")
+    delivery_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True).with_variant(
+            SQLiteDateTime(timezone=True, truncate_microseconds=True), "sqlite"),
+        nullable=True,
+    )
+    delivery_protocol: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

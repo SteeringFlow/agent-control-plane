@@ -94,15 +94,22 @@ class _FakeWorker:
 
 
 class _OkRuntime:
-    """成功 Runtime（真实 Core 集成用）：记录被执行的次数。"""
+    """成功 Runtime（真实 Core 集成用）：记录被执行的次数。
+
+    P1 / C1：投递是显式的第 7 段（由应用层在结果落库后发起）。
+    """
 
     def __init__(self, result: RuntimeExecutionResult) -> None:
         self.result = result
         self.calls = 0
+        self.deliveries: list = []
 
     def execute(self, inbound: InboundInteraction) -> RuntimeExecutionResult:
         self.calls += 1
         return self.result
+
+    def deliver(self, outbound) -> None:
+        self.deliveries.append(outbound)
 
 
 def _driver(source, worker, **overrides) -> ProductionDriver:
@@ -331,7 +338,10 @@ FORBIDDEN_TOKENS = (
 
 FORBIDDEN_CALLS = frozenset({
     "record_outcome", "claim_processing", "create_pending",
-    "record_success", "record_failure", "execute",
+    # P1 / C6：成功路径拆为「Agent 成功」与「投递终态」两个 phase——
+    # Driver 依旧**不得**直接调用任何 phase（它只触发 Worker）。
+    "record_agent_success", "record_delivery_success",
+    "record_delivery_failure", "record_failure", "execute",
 })
 
 

@@ -368,12 +368,16 @@ def test_f1_delivery_failure_real_probe_payload_never_lands(db_engine) -> None:
                 lambda: _interaction_rows(db_engine), observed),
         ).execute(_inbound(g["channel"], "msg-df", conversation="conv-df"))
 
-    assert observed["payload_during_failed_delivery"] is None
-    assert observed["status_during_failed_delivery"] == "processing"
+    # P1/C3 result persisted BEFORE delivery -> observable during failed delivery
+    assert observed["payload_during_failed_delivery"] is not None
+    assert observed["payload_during_failed_delivery"]["content"] == "echo:hello"
+    # P1/C3：Agent 成功先落库 → 投递期间 processing 已是 succeeded
+    assert observed["status_during_failed_delivery"] == "succeeded"
 
     row = _interaction_rows(db_engine)[0]
     assert (row.processing_status, row.delivery_status) == ("succeeded", "failed")
-    assert row.response_payload is None                # 从未落库（非「稍后落」）
+    assert row.response_payload is not None             # P1/C3
+    assert row.response_payload["content"] == "echo:hello"
 
 
 def test_f2_payload_persistence_time_point_is_after_delivery(db_engine) -> None:
@@ -388,8 +392,11 @@ def test_f2_payload_persistence_time_point_is_after_delivery(db_engine) -> None:
             lambda: _interaction_rows(db_engine), observed),
     ).execute(_inbound(g["channel"]))
 
-    assert observed["payload_during_delivery"] is None
-    assert observed["status_during_delivery"] == "processing"
+    # P1/C3 result persisted BEFORE delivery
+    assert observed["payload_during_delivery"] is not None
+    assert observed["payload_during_delivery"]["content"] == "echo:hello"
+    # P1/C3：Agent 成功先落库 → 投递期间 processing 已是 succeeded
+    assert observed["status_during_delivery"] == "succeeded"
     assert _interaction_rows(db_engine)[0].response_payload is not None
 
 

@@ -39,6 +39,7 @@ import uuid
 from pathlib import Path
 
 from app.application.errors import ChannelDeliveryFailedError
+from app.domain.artifact_reference import artifact_reference_records
 from app.domain.channel import Channel
 from app.domain.inbound_interaction import (
     CHAT_TYPE_METADATA_KEY,
@@ -155,12 +156,18 @@ class LocalChannelAdapter:
         if not isinstance(outbound.content, str) or not outbound.content.strip():
             raise ChannelDeliveryFailedError(channel_id=outbound.channel_id)
 
-        line = json.dumps({
+        # ACP V0.3 Phase 1：outbox 是**结构化 sink**——`content` **原样**（不渲染
+        # 引用块），引用以**完整原值**的 `artifacts` 键随行透传（L4：展示预算
+        # 不作用于此）。**无 artifact 时完全不写该键** ⇒ 旧输出逐字节不变。
+        record = {
             "channel_id": outbound.channel_id,
             "external_conversation_id": outbound.external_conversation_id,
             "content": outbound.content,
             "metadata": outbound.metadata,
-        }, ensure_ascii=False)
+        }
+        if outbound.artifacts:
+            record["artifacts"] = artifact_reference_records(outbound.artifacts)
+        line = json.dumps(record, ensure_ascii=False)
         try:
             self._outbox_path.parent.mkdir(parents=True, exist_ok=True)
             with self._outbox_path.open("a", encoding="utf-8") as handle:

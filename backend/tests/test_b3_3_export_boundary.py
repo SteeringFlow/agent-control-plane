@@ -5,13 +5,17 @@
 2. 「绝不因 frontend/ 缺失而推断 oss_export」「绝不把部分检出当有效导出」；
 3. F2：source 模式守卫含 certbot-renew.sh；oss_export 模式显式剔除该文件但
    保留其余部署资产守卫；unknown 保守返回全量（缺失=显式失败）；
-4. 纯 UI 模块清单不含混合职责文件（混合模块的 backend 断言在导出中继续执行）。
+4. 纯 UI 模块清单不含混合职责文件（混合模块的 backend 断言在导出中继续执行）；
+5. R2.3：导出树的**收集期安全**守卫——导出树不含 frontend/，故凡导出测试
+   都不得在模块级（import 期）打开 frontend 文件，且凡运行时依赖 frontend/
+   的导出测试必须被 AST 分析器识别（否则公开 CI 收集期 ERROR 而非跳过）。
 
 真实双环境证据见 Phase B3.3 报告（源仓库全量 + 导出模拟树全量）。
 """
 
 from __future__ import annotations
 
+import ast
 import tempfile
 from pathlib import Path
 
@@ -401,4 +405,141 @@ def test_dangling_refs_to_excluded_files_ratchet() -> None:
     )
     assert not resolved, (
         f"记账中的悬空引用已被修复，请同步移除记账条目：{resolved}"
+    )
+
+
+# ------------------------------------------------------- 导出树收集期安全（R2.3）
+#
+# 导出树按 A1 决策**不含 frontend/**。导出树中的前端依赖测试由 conftest 的
+# AST 分析在**收集期**逐函数跳过（见 oss_export_boundary.frontend_consuming_tests）。
+# 两条纪律必须同时成立，否则公开 CI 会在收集期直接 ERROR（而非优雅跳过）：
+#   ① 导出测试不得在**模块级**（import 期）打开 frontend 文件；
+#   ② 凡运行时依赖 frontend/ 的导出测试必须被分析器**识别**（漏检即暴露）。
+
+
+def _module_level_frontend_io(path: Path) -> list[tuple[str, int]]:
+    """模块级（import 期）执行的 frontend IO —— 导出树中会导致收集期 ERROR。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    fe_vars: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(n, ast.Constant) and n.value == "frontend" for n in ast.walk(node)
+        ):
+            for target in node.targets:
+                for n in ast.walk(target):
+                    if isinstance(n, ast.Name):
+                        fe_vars.add(n.id)
+    offenders: list[tuple[str, int]] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue  # 函数体在调用时执行，不属于 import 期
+        for sub in ast.walk(node):
+            if not isinstance(sub, ast.Call):
+                continue
+            func = sub.func
+            attr = (
+                func.attr if isinstance(func, ast.Attribute)
+                else func.id if isinstance(func, ast.Name)
+                else None
+            )
+            if attr not in {"read_text", "read_bytes", "open"}:
+                continue
+            seg = ast.dump(sub)
+            if "frontend" in seg.lower() or any(v in seg for v in fe_vars):
+                offenders.append((path.name, sub.lineno))
+    return offenders
+
+
+def _direct_frontend_readers_in_tests(path: Path) -> set[str]:
+    """测试函数体内**直接**打开 frontend 派生路径的函数名集合。
+
+    与 :func:`_module_level_frontend_io` 同一口径（frontend 派生变量 + "frontend"
+    字面量），但只统计 ``test_*`` 顶层函数体内的调用点。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    fe_vars: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(n, ast.Constant) and n.value == "frontend" for n in ast.walk(node)
+        ):
+            for target in node.targets:
+                for n in ast.walk(target):
+                    if isinstance(n, ast.Name):
+                        fe_vars.add(n.id)
+    readers: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.startswith("test_"):
+            continue
+        for sub in ast.walk(node):
+            if not isinstance(sub, ast.Call):
+                continue
+            func = sub.func
+            attr = (
+                func.attr if isinstance(func, ast.Attribute)
+                else func.id if isinstance(func, ast.Name)
+                else None
+            )
+            if attr not in {"read_text", "read_bytes", "open"}:
+                continue
+            seg = ast.dump(sub)
+            if "frontend" in seg.lower() or any(v in seg for v in fe_vars):
+                readers.add(node.name)
+                break
+    return readers
+
+
+@requires_source
+def test_exported_backend_tests_have_no_module_level_frontend_io() -> None:
+    """导出树中的后端测试**不得**在模块级（import 期）读取 frontend/ 文件。
+
+    导出树不含 frontend/：若某测试在 import 期就打开 frontend 文件，它会在公开
+    CI 的**收集期**直接 ERROR（收集期跳过规则只覆盖测试函数体内的读取）。
+    frontend 读取必须发生在测试函数体内。
+    """
+    included = sorted(_export_tree()["included"])  # type: ignore[index]
+    offenders: list[tuple[str, int]] = []
+    for relpath in included:
+        if not relpath.startswith("backend/tests/") or not relpath.endswith(".py"):
+            continue
+        offenders.extend(_module_level_frontend_io(boundary.ROOT / relpath))
+    assert not offenders, (
+        "导出树中的后端测试在模块级读取 frontend/（导出树收集期 ERROR）："
+        f"{offenders}"
+    )
+
+
+@requires_source
+def test_frontend_dependent_exported_tests_are_detected_for_skip() -> None:
+    """凡**直接读取 frontend/** 的导出测试，必须被 AST 分析器识别出消费函数。
+
+    导出树中 conftest 依此在**收集期**跳过这些测试函数；若分析器漏检，该测试
+    就会在公开 CI 中因缺失 frontend/ 而 ERROR。本断言让「漏检」立即暴露。
+
+    判定口径：只统计**含测试函数**的模块（分析器/夹具等非测试模块不在此列），
+    且只统计测试函数体内**直接**打开 frontend 派生路径的调用点——这正是
+    「收集期 ERROR」的实际成因。
+    """
+    included = sorted(_export_tree()["included"])  # type: ignore[index]
+    undetected: list[str] = []
+    checked = 0
+    for relpath in included:
+        if not relpath.startswith("backend/tests/") or not relpath.endswith(".py"):
+            continue
+        path = boundary.ROOT / relpath
+        readers = _direct_frontend_readers_in_tests(path)
+        if not readers:
+            continue
+        checked += 1
+        try:
+            consuming = boundary.consuming_tests_for(path)
+        except Exception:  # 分析失败 = 保守放行，但必须被本断言记账
+            consuming = frozenset()
+        if not (consuming & readers):
+            undetected.append(f"{relpath}:{sorted(readers)}")
+    assert checked > 0, "未发现任何直接读取 frontend/ 的导出测试——分析规则可能已失效"
+    assert not undetected, (
+        "这些导出测试直接读取 frontend/ 但未被分析器识别（导出树收集期会 ERROR）："
+        f"{undetected}"
     )

@@ -57,6 +57,7 @@ from app.domain.routing_result import RoutingResult
 from app.domain.user import User
 from app.persistence.models.session import SessionModel
 from app.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.delivery_lifecycle_helper import DeliveringCoordinator
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ACP_PY = BACKEND_DIR / "app" / "adapters" / "agents" / "acp.py"
@@ -235,7 +236,7 @@ def _dispatch(db_engine, adapter) -> AgentDispatchExecutor:
 
 def _coordinator(db_engine, adapter, channel_adapter) -> RuntimeCoordinator:
     uow = _uow_factory(db_engine)
-    return RuntimeCoordinator(
+    return DeliveringCoordinator(RuntimeCoordinator(
         identity_resolution=IdentityResolutionExecutor(uow),
         access_authorization=AccessAuthorizationExecutor(uow),
         routing=RoutingExecutor(uow),
@@ -243,7 +244,7 @@ def _coordinator(db_engine, adapter, channel_adapter) -> RuntimeCoordinator:
         session_creation=SessionCreationExecutor(uow),
         agent_dispatch=AgentDispatchExecutor(agent_adapter=adapter, uow_factory=uow),
         delivery=DeliveryExecutor(channel_adapter=channel_adapter),
-    )
+    ))
 
 
 def _inbound(channel_id: int, content: str = "hello",

@@ -1,5 +1,7 @@
 # M6.6-D — Provider Adapter & Real First Success Audit
 
+> **OSS 发布说明**：本文为历史审计记录；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 > 前序：
 > - `M6.6-C3 Bootstrap / First Message` — PASS / CLOSED
 > - `M6.6-C4 First Success` — PASS / CLOSED

@@ -70,17 +70,24 @@ ALL_STATES = (
 
 
 class _OkRuntime:
-    """成功 Runtime：记录调用次数与收到的 inbound。"""
+    """成功 Runtime：记录调用次数与收到的 inbound。
+
+    P1 / C1：投递是显式的第 7 段（由应用层在结果落库后发起）。
+    """
 
     def __init__(self, result: RuntimeExecutionResult) -> None:
         self.result = result
         self.calls = 0
         self.inbounds: list[InboundInteraction] = []
+        self.deliveries: list = []
 
     def execute(self, inbound: InboundInteraction) -> RuntimeExecutionResult:
         self.calls += 1
         self.inbounds.append(inbound)
         return self.result
+
+    def deliver(self, outbound) -> None:
+        self.deliveries.append(outbound)
 
 
 class _ScriptedInboundAdapter:

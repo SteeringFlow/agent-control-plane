@@ -342,12 +342,47 @@ def test_t6_to_t9_failure_diagnosed_in_ui(label: str) -> None:
     assert "下一步" in detail, detail
 
 
+# 共享阶段（agent_dispatch / 通用失败兜底 / delivery）：同一 failure 事实 → 同一结论
+# ——M7-AUI-5（真实事故对齐）冻结的不变量：两页的 step/reason/next 必须逐字一致，
+# 且不得出现某页独有的额外字段（home.js 额外暴露 stage，connect.js 不暴露）。
+_SHARED_DIAGNOSIS_LABELS = ("agent", "processing", "delivery")
+# 页面特化阶段（identity_resolution / authorization）：Home 的前提是「首条消息引导窗口
+# 未开启/已过期」，其下一步必须是 Home 真实可执行的动作（M7-AUI-10.6.2-B：「重新验证
+# 并引导」+ 窗口内重发一条新的单聊消息）；connect 是独立接入/恢复页，没有该入口，
+# 其下一步是「重新「接通」」⇒ 两页文案**按设计不同**，不再要求逐字一致。
+_PAGE_SPECIFIC_DIAGNOSIS_LABELS = ("identity", "authorization")
+
+
+def _visible_conclusion(diag: dict | None) -> tuple:
+    """用户可见结论三元组（step/reason/next）——一致性不变量只约束这三项。"""
+    assert diag is not None
+    return (diag.get("step"), diag.get("reason"), diag.get("next"))
+
+
 @needs_node
 def test_t6_to_t9_diagnosis_mapping_identical_in_home() -> None:
-    """home.js 与 connect.js 的诊断映射一致（同一 failure 事实 → 同一结论）。"""
-    for label in ("identity", "authorization", "agent", "processing", "delivery"):
+    """共享阶段两页结论逐字一致；identity/authorization 为页面特化（契约分层）。
+
+    - 共享阶段：M7-AUI-5 事故对齐不变量 → step/reason/next 逐字一致，且字段集
+      不越界（home 侧至多多一个 stage，connect 侧不得多出字段）。
+    - identity/authorization：M7-AUI-10.6.2-B 之后按页面特化 → step 相同；next
+      各自指向**本页**可执行动作；home 侧 stage 与输入 failure 事实一致。
+    """
+    for label in _SHARED_DIAGNOSIS_LABELS:
         item = _STAGE_ITEM[label]
-        assert _diagnose(item) == _diagnose(item, js_file=HOME_JS, mode="home"), label
+        conn = _diagnose(item)
+        home = _diagnose(item, js_file=HOME_JS, mode="home")
+        assert _visible_conclusion(conn) == _visible_conclusion(home), label
+        assert set(conn).issubset({"step", "reason", "next"}), label
+        assert set(home).issubset({"step", "reason", "next", "stage"}), label
+    for label in _PAGE_SPECIFIC_DIAGNOSIS_LABELS:
+        item = _STAGE_ITEM[label]
+        conn = _diagnose(item)
+        home = _diagnose(item, js_file=HOME_JS, mode="home")
+        assert conn["step"] == home["step"], label
+        assert "重新「接通」" in conn["next"], label
+        assert "重新验证并引导" in home["next"], label
+        assert home.get("stage") == item["failure_stage"], label
 
 
 @needs_node

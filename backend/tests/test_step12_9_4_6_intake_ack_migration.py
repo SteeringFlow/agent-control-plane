@@ -62,17 +62,24 @@ BACKEND = Path(__file__).resolve().parents[1]
 class _SpyRuntime:
     """执行探针：记录 Runtime.execute 被调用的次数（G1 = 0 次 / G2 = 1 次的依据）。
 
-    `result` 为真实 RuntimeExecutionResult（record_success 需要 session FK）；
+    `result` 为真实 RuntimeExecutionResult（成功记录需要 session FK）；
     G1 场景下执行次数为 0，result 永不被消费。
+
+    P1 / C1：投递是**显式**的第 7 段（由应用层在结果落库后发起），故本探针
+    也实现 `deliver`（只记录，不外发）。
     """
 
     def __init__(self, result=None) -> None:
         self.result = result
         self.calls = 0
+        self.deliveries: list = []
 
     def execute(self, inbound: InboundInteraction):
         self.calls += 1
         return self.result
+
+    def deliver(self, outbound) -> None:
+        self.deliveries.append(outbound)
 
 
 class _EchoAgentAdapter:

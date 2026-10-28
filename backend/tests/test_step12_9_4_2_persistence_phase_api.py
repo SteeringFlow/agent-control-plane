@@ -46,15 +46,23 @@ from app.persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
 class _StubRuntime:
-    """极简 inner：只记录被调用次数并回显给定 Result（不触碰真实 Runtime 六段）。"""
+    """极简 inner：只记录被调用次数并回显给定 Result（不触碰真实 Runtime 六段）。
+
+    P1 / C1：Runtime 的执行链止于 Dispatch；投递是**显式**的第 7 段，
+    由应用层在结果落库之后发起——故本替身实现 `deliver()`。
+    """
 
     def __init__(self, result: RuntimeExecutionResult | None = None) -> None:
         self.result = result
         self.calls = 0
+        self.deliveries: list = []
 
     def execute(self, inbound: InboundInteraction) -> RuntimeExecutionResult:
         self.calls += 1
         return self.result
+
+    def deliver(self, outbound) -> None:
+        self.deliveries.append(outbound)
 
 
 def _uow_factory(db_engine):
@@ -116,11 +124,19 @@ def _activities(db_engine, interaction_id: int):
 
 
 def test_a1_phase_operations_are_public() -> None:
-    """四个 phase operation 成为可独立调用的公开方法（未来 Worker 直接复用）。"""
-    for name in ("create_pending", "claim_processing", "record_success",
-                 "record_failure"):
+    """phase operation 成为可独立调用的公开方法（未来 Worker 直接复用）。
+
+    P1 / C6：成功路径拆为「Agent 成功」与「投递终态」两个 phase
+    （`record_success` 已由 `record_agent_success` + `record_delivery_success`
+    / `record_delivery_failure` 取代）。
+    """
+    for name in ("create_pending", "claim_processing", "record_agent_success",
+                 "record_outbound_success", "record_outbound_failure",
+                 "record_failure", "record_agent_success_and_deliver"):
         assert callable(getattr(PersistingCoordinator, name, None)), \
             f"PersistingCoordinator 缺少 phase operation：{name}"
+    assert not hasattr(PersistingCoordinator, "record_success"), \
+        "旧的 record_success 已拆分（避免两套写同一事实的入口）"
 
 
 # ================================================================== B. create_pending
@@ -219,21 +235,54 @@ def test_d1_record_failure_is_a_public_phase(db_engine) -> None:
     assert row["retryable"] is False
 
 
-def test_d2_record_success_is_a_public_phase(db_engine) -> None:
-    """成功终态：processing=SUCCEEDED × delivery=DELIVERED + 响应快照。"""
+def test_d2_record_agent_success_is_a_public_phase(db_engine) -> None:
+    """**Agent 成功** phase：processing=SUCCEEDED × delivery=**PENDING** + 响应快照。
+
+    P1 / C3 的核心语义：**投递尚未发生**，所以 delivery 仍是 PENDING——
+    「Agent 已成功」≠「外部消息已送达」。响应快照此时**已经落库**。
+    """
     g = _seed(db_engine, with_session=True)
     coord = _coordinator(db_engine)
     interaction_id = coord.create_pending(_inbound(g["channel"]))
     coord.claim_processing(interaction_id)
 
-    coord.record_success(interaction_id, RuntimeExecutionResult(
+    coord.record_agent_success(interaction_id, RuntimeExecutionResult(
         session_mode=REUSE_ACTIVE, session_id=g["session"],
         agent_response=AgentResponse(content="ok")))
 
     row = _row(db_engine, interaction_id)
     assert row["processing_status"] == "succeeded"
-    assert row["delivery_status"] == "delivered"
+    assert row["delivery_status"] == "pending"      # 投递**尚未**发生
     assert row["response_payload"]["content"] == "ok"
+    # 「投递完成」的事实此刻**不存在**
+    assert (ACTIVITY_COMPLETED, STAGE_DELIVERY, "succeeded") not in _activities(
+        db_engine, interaction_id)
+
+
+def test_d2b_record_outbound_success_lands_delivered(db_engine) -> None:
+    """**投递成功** phase：delivery=DELIVERED + interaction_completed Evidence。"""
+    g = _seed(db_engine, with_session=True)
+    coord = _coordinator(db_engine)
+    interaction_id = coord.create_pending(_inbound(g["channel"]))
+    coord.claim_processing(interaction_id)
+    coord.record_agent_success(interaction_id, RuntimeExecutionResult(
+        session_mode=REUSE_ACTIVE, session_id=g["session"],
+        agent_response=AgentResponse(content="ok")))
+
+    # P2：投递终态前必须先取得投递权（统一 claim 闸门）
+    with _uow_factory(db_engine)() as uow:
+        attempt = uow.interactions.claim_delivery(
+            interaction_id, max_attempts=3, lease_seconds=300)
+        uow.commit()
+    assert attempt == 1
+    coord.record_outbound_success(
+        interaction_id, session_id=g["session"],
+        expected_delivery_attempts=attempt)
+
+    row = _row(db_engine, interaction_id)
+    assert row["processing_status"] == "succeeded"   # processing 不被改写
+    assert row["delivery_status"] == "delivered"
+    assert row["response_payload"]["content"] == "ok"  # 结果保留
     assert (ACTIVITY_COMPLETED, STAGE_DELIVERY, "succeeded") in _activities(
         db_engine, interaction_id)
 
@@ -242,7 +291,11 @@ def test_d2_record_success_is_a_public_phase(db_engine) -> None:
 
 
 def test_e1_execute_composes_create_claim_execute_outcome(db_engine) -> None:
-    """同步路径回归：execute() = 四 phase 组合 → inner 恰好执行一次 + 终态落定。"""
+    """同步路径回归：execute() = phase 组合 → inner 恰好执行一次 + 终态落定。
+
+    P1 / C1：组合顺序变为「Agent 执行 → **结果落库** → 投递 → 投递结果落定」
+    （与 Worker 路径共用 `AgentDeliveryLifecycle`）。
+    """
     g = _seed(db_engine, with_session=True)
     inner = _StubRuntime(RuntimeExecutionResult(
         session_mode=REUSE_ACTIVE, session_id=g["session"],
@@ -252,6 +305,7 @@ def test_e1_execute_composes_create_claim_execute_outcome(db_engine) -> None:
     result = coord.execute(_inbound(g["channel"]))
 
     assert inner.calls == 1                        # 没有被双执行
+    assert len(inner.deliveries) == 1              # 投递恰好一次
     assert result.agent_response.content == "ok"   # Result 原样返回
     with _uow_factory(db_engine)() as uow:
         rec = uow.interactions.find_by_channel_and_external_id(

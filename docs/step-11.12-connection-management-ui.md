@@ -1,5 +1,7 @@
 # Step 11.12 — Connection Management UI
 
+> **OSS 发布说明**：本文为历史实现记录；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 > **Management 闭环收口（镜像 11.5/11.9 的 vanilla 形态，刻意克制）。**
 > 11.5 Agent UI ✅ → 11.9 Channel UI ✅ → 11.11 Connection API ✅ → 本步 ✅。
 > 至此 Agent / Channel / Connection 三实体管理闭环完整，且全部复用同一形态：

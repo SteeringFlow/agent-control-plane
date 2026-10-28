@@ -1,5 +1,7 @@
 # Implementation Package 2-B — Authorization Persistence & Rollout Design
 
+> **OSS 发布说明**：本文为架构设计说明；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**，相关引用仅用于说明被设计的前端面（见 README「Project status」）。
+
 > 状态：**只读设计**。未改生产代码、未改测试、未建 migration、未改 schema、未改冻结契约。
 > 范围：**只裁决 Grant persistence 的最终边界**（B1 – B7）。不再审整个 ACP。
 > 继承：ADR-1 ~ ADR-10（FROZEN）、Gate 1 / 2 / 2.5 / 2.6 / 3、Package 1（`f43689a`）、

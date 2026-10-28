@@ -39,7 +39,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.adapters.agents.acp import PROTOCOL_TENCENT_ACP_SSE, ACPAdapter
 from app.application import RuntimeCoordinator
 from app.application.agent_dispatch import AgentDispatchExecutor
-from app.application.delivery import DeliveryExecutor
+from app.application.delivery import DeliveryExecutor, build_outbound_response
 from app.application.access_authorization import AccessAuthorizationExecutor
 from app.application.identity_resolution import IdentityResolutionExecutor
 from app.application.routing import RoutingExecutor
@@ -177,8 +177,11 @@ def test_runtime_e2e_create_new_with_real_tencent(db_engine) -> None:
     assert isinstance(agent_adapter, AgentAdapter)
     channel_adapter = _TestChannelAdapter()
 
-    _coordinator(db_engine, agent_adapter, channel_adapter).execute(
-        _inbound(g["channel"]))
+    # P1 / C1：投递是**显式**的第 7 段（execute() 只到 Dispatch）。
+    inbound = _inbound(g["channel"])
+    coordinator = _coordinator(db_engine, agent_adapter, channel_adapter)
+    result = coordinator.execute(inbound)
+    coordinator.deliver(build_outbound_response(inbound, result.agent_response))
 
     # 11. execute 成功（未抛错）
     # 12a. Delivery 恰好发生一次

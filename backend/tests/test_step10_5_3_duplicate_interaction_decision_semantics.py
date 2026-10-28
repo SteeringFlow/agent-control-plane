@@ -502,13 +502,22 @@ def test_f1_no_lock_lease_queue_infrastructure_in_decision_layer() -> None:
             # 阻塞的 Worker.process（同步 DB / HTTP），只能由线程承载——放进 asyncio
             # loop 会阻塞整个服务。threading 因此**只豁免这一个文件**，其余模块仍禁。
             banned = {"redis", "celery", "queue", "multiprocessing"}
-            if path.name != "driver.py":
+            # P2：delivery_recovery.py 是第二个后台 ticker（与 driver.py 同款
+            # 豁免：它跑的是阻塞的投递调用，只能由线程承载）。
+            if path.name not in ("driver.py", "delivery_recovery.py"):
                 banned.add("threading")
             assert roots.isdisjoint(banned), f"{path.name}: {roots}"
             for name in names:
                 lower = name.lower()
-                for token in ("lock", "lease", "queue", "mutex",
-                              "semaphore", "dedup", "idempot"):
+                # P2：投递恢复（delivery_recovery.py）**经批准**引入投递级
+                # 「租约」概念（lease_seconds）——它是投递尝试的持有期限，
+                # 不是执行层的锁/队列/幂等基础设施；其余模块仍禁这些词。
+                tokens = ("lock", "lease", "queue", "mutex",
+                          "semaphore", "dedup", "idempot")
+                if path.name == "delivery_recovery.py":
+                    tokens = ("lock", "queue", "mutex", "semaphore",
+                              "dedup", "idempot")
+                for token in tokens:
                     assert token not in lower, f"{path.name} 出现 {name}"
                 # 12.9.4.5：`Worker`（application/worker.py）是经审计引入的**单次
                 # 执行 primitive**，不是后台 worker 基础设施（无 loop / 无 poll /
@@ -530,6 +539,9 @@ def test_f2_port_surface_unchanged_no_decision_methods() -> None:
         "create", "claim_processing", "record_outcome", "get_by_id",
         "find_by_channel_and_external_id", "find_pending",
         # 12.9.4.12 attempt fence：PROCESSING 孤儿回收（只回收，不做幂等决策）
+        # P2：投递级三方法（claim_delivery / find_undelivered /
+        # reclaim_stale_delivery）——G3 已批准的投递恢复能力。
+        "claim_delivery", "find_undelivered", "reclaim_stale_delivery",
         "reclaim_stale_processing",
         # 13.1 Observability：有界陈列读（纯读，不做任何幂等/去重决策）
         "list_recent",
@@ -584,7 +596,7 @@ def test_f3_delivery_retry_carrier_exists_but_no_retry(db_engine) -> None:
                         f"{path.name} 出现 Retry 基础设施符号：{node.name}"
     names = {f.name for f in fields(OutboundResponse)}
     assert names == {"channel_id", "external_conversation_id", "content",
-                     "metadata"}
+                     "metadata", "artifacts"}
     assert "external_interaction_id" not in names
 
 

@@ -66,6 +66,7 @@ from app.domain.session_resolution import CREATE_NEW, REUSE_ACTIVE
 from app.domain.user import User
 from app.persistence.models.session import SessionModel
 from app.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.delivery_lifecycle_helper import DeliveringCoordinator
 
 BACKEND = Path(__file__).resolve().parents[1]
 APP = BACKEND / "app"
@@ -136,7 +137,7 @@ def _coordinator(db_engine, agent_adapter=None, channel_adapter=None) -> Runtime
     """直连 RuntimeCoordinator（不经 PersistingCoordinator——wrapper 未接线，
     会丢弃结果；本步验收的是 Runtime 自身的返回值）。"""
     uow = _uow_factory(db_engine)
-    return RuntimeCoordinator(
+    return DeliveringCoordinator(RuntimeCoordinator(
         identity_resolution=IdentityResolutionExecutor(uow),
         access_authorization=AccessAuthorizationExecutor(uow),
         routing=RoutingExecutor(uow),
@@ -147,7 +148,7 @@ def _coordinator(db_engine, agent_adapter=None, channel_adapter=None) -> Runtime
             uow_factory=uow),
         delivery=DeliveryExecutor(
             channel_adapter=channel_adapter or _RecordingChannelStub()),
-    )
+    ))
 
 
 def _inbound(channel_id: int, interaction: str = "msg-1",

@@ -54,6 +54,33 @@ class Settings(BaseSettings):
     DRIVER_STALE_THRESHOLD_SECONDS: int = Field(default=300, ge=5)
     DRIVER_BACKOFF_INTERVAL_SECONDS: float = Field(default=5.0, gt=0)
 
+    # P0（Delivery 可靠性 · 观测与配置）：WeCom 智能机器人的 **ACK 等待窗口**
+    # （发帧 → 等待渠道 errcode 回执的上限）配置化。
+    #
+    # - 默认 10.0s = `wecom_bot.DEFAULT_ACK_WAIT_TIMEOUT_S` 的**既有硬编码值**
+    #   逐字搬来 ⇒ 零行为变化（仅把常量变成可配置项）；
+    # - 该窗口**只**覆盖「发帧→ACK」这一段，与 Agent 执行时长**互不叠加、
+    #   互不换算**（见 wecom_bot.py 模块 docstring）；
+    # - gt=0：非正值会让 Event.wait 立即返回（等于关掉 ACK 校验 → 假绿），
+    #   故非法值在进程启动时立刻失败（与 DRIVER_* 的 fail-fast 纪律同款）。
+    WECOM_BOT_ACK_WAIT_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
+
+    # P2 Delivery Recovery（投递恢复驱动）——**默认关闭**。
+    #
+    # 启用顺序（runbook，见 docs/step-p2-delivery-recovery-implementation.md）：
+    #   迁移 → 部署 P2 代码（驱动保持关闭）→ 排空旧 Worker → 一次性回填 →
+    #   核验查询 → **另行授权**后开启本开关。
+    RECOVERY_ENABLED: bool = False
+    RECOVERY_POLL_INTERVAL_SECONDS: float = Field(default=10.0, gt=0)
+    RECOVERY_PICKUP_LIMIT: int = Field(default=10, ge=1)
+    RECOVERY_RECLAIM_EVERY: int = Field(default=30, ge=1)
+    # 投递 attempt 的**租约**长度（秒）。⚠️ **保守默认值，未经生产实测**（待 P4）：
+    # 必须大于「发送耗时上界 + ACK 等待窗口 + 余量」。⚠️ 租约**不能**消除重复
+    # 发送风险——旧 attempt 可能仍在外部调用中（详见 P2 设计报告 §5）。
+    RECOVERY_LEASE_SECONDS: int = Field(default=300, ge=30)
+    # **总** attempt 次数上限（含首次投递）；达上限后不再重投（转人工裁决）。
+    RECOVERY_MAX_ATTEMPTS: int = Field(default=3, ge=1)
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

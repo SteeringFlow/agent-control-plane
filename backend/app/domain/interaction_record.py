@@ -40,6 +40,15 @@ PROCESSING_FAILED = "failed"
 DELIVERY_PENDING = "pending"
 DELIVERY_DELIVERED = "delivered"
 DELIVERY_FAILED = "failed"
+# P2 Delivery Lifecycle：投递**在途**（某个 attempt 取得独占权、租约内）与
+# 「结果未知」的显式取值。`unknown` 表示「可能已送达」⇒ **永不自动重投**。
+DELIVERY_DELIVERING = "delivering"
+DELIVERY_UNKNOWN = "unknown"
+
+#: P2 协议世代：0 = 历史/未知协议记录（**禁止自动重投**——`delivery_attempts=0`
+#: 对历史行**不能**证明「从未发送」）；1 = 新协议记录，遵循 P2 Delivery 状态机。
+DELIVERY_PROTOCOL_LEGACY = 0
+DELIVERY_PROTOCOL_V1 = 1
 
 
 class OutcomeCommit(enum.Enum):
@@ -75,6 +84,14 @@ class InteractionRecord:
     # 12.9.4.12：CAS 抢占时刻的 DB 时间戳（只有抢占写入、回收写 NULL、
     # outcome 只读不写）——Worker 读回持有后作为 attempt fence 的等式值。
     processing_started_at: datetime | None = None
+    # P2：投递 attempt 的**单调计数** = 投递围栏身份（**不用时间戳等式**——
+    # SQLite 秒级精度会让「同秒回收 + 重新接手」碰撞，旧尝试的结果可能
+    # 写穿新尝试）。0 = 从未尝试过投递。
+    delivery_attempts: int = 0
+    # P2：投递尝试的持有起点（DB 时钟写入；过期回收时写 NULL）。
+    delivery_started_at: datetime | None = None
+    # P2：协议世代标记（0 = 历史/未知协议 ⇒ 禁止自动重投；1 = 新协议）。
+    delivery_protocol: int = DELIVERY_PROTOCOL_LEGACY
     id: int | None = None
     # 13.1 Observability 读面：DB 生成的审计时间戳，只由 mapper to_domain
     # 读回（读路径回显）；to_orm 写路径不携带——created_at/updated_at 仍由

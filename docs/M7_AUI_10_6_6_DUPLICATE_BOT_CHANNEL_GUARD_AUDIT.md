@@ -1,5 +1,7 @@
 # M7-AUI-10.6.6 — Duplicate Bot Channel Guard Audit（重复 WeCom Bot 渠道防护只读审计）
 
+> **OSS 发布说明**：本文为历史审计记录；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 > 状态：**只读审计完成，防护未实现**（先审计后实现）。
 > 范围：仅 `wecom_bot` 渠道形态；不抽象为通用 Identity Framework。
 > 纪律：零运行时代码改动、零数据库/业务数据改动、零凭据读取或输出。

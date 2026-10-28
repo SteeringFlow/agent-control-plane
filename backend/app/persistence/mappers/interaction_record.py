@@ -22,6 +22,9 @@ def to_domain(row: InteractionModel) -> InteractionRecord:
         failure_code=row.failure_code,
         retryable=row.retryable,
         processing_started_at=row.processing_started_at,
+        delivery_attempts=row.delivery_attempts,
+        delivery_started_at=row.delivery_started_at,
+        delivery_protocol=row.delivery_protocol,
         # 13.1 Observability：DB 生成的审计时间戳只随读路径回显
         created_at=row.created_at,
         updated_at=row.updated_at,

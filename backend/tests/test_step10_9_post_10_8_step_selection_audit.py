@@ -247,7 +247,8 @@ def test_c1_g6_case_b_response_payload_stays_null(db_engine) -> None:
 
     row = _interaction_rows(db_engine)[0]
     assert (row.processing_status, row.delivery_status) == ("succeeded", "failed")
-    assert row.response_payload is None
+    assert row.response_payload is not None                 # P1/C3
+    assert row.response_payload["content"] == "echo:hello"
 
 
 def test_c2_g8_failure_path_weak_key_exists_but_success_does_not(db_engine) -> None:

@@ -60,6 +60,7 @@ from app.domain.outbound_response import OutboundResponse
 from app.domain.user import User
 from app.persistence.models.session import SessionModel
 from app.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.delivery_lifecycle_helper import DeliveringCoordinator
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -143,7 +144,7 @@ def _seed(db_engine) -> dict[str, int]:
 
 def _coordinator(db_engine, agent_adapter, channel_adapter) -> RuntimeCoordinator:
     uow = _uow_factory(db_engine)
-    return RuntimeCoordinator(
+    return DeliveringCoordinator(RuntimeCoordinator(
         identity_resolution=IdentityResolutionExecutor(uow),
         access_authorization=AccessAuthorizationExecutor(uow),
         routing=RoutingExecutor(uow),
@@ -152,7 +153,7 @@ def _coordinator(db_engine, agent_adapter, channel_adapter) -> RuntimeCoordinato
         agent_dispatch=AgentDispatchExecutor(agent_adapter=agent_adapter,
                                              uow_factory=uow),
         delivery=DeliveryExecutor(channel_adapter=channel_adapter),
-    )
+    ))
 
 
 def _inbound(channel_id: int, external_id: str = "wx_a",
@@ -298,12 +299,17 @@ def test_agent_session_reference_not_confused(db_engine) -> None:
 
 
 def test_outbound_boundary_no_internal_ids(db_engine) -> None:
-    """出口只有 channel/conversation/content/metadata——不带任何内部 id。"""
+    """出口只有 channel/conversation/content/metadata/artifacts——不带任何内部 id。
+
+    ACP V0.3 Phase 1：+ `artifacts`（Agent 产出的**引用**）。它携带的是
+    Agent 侧引用，**不是** Control Plane 的内部 id —— 故下方的禁带清单不变。
+    """
     g = _seed(db_engine)
     _, channel_adapter = _run_full(db_engine, _inbound(g["channel"], "wx_a", "convB"))
     outbound = channel_adapter.deliveries[-1]
     fields = {f.name for f in dataclasses.fields(outbound)}
-    assert fields == {"channel_id", "external_conversation_id", "content", "metadata"}
+    assert fields == {"channel_id", "external_conversation_id", "content",
+                      "metadata", "artifacts"}
     for banned in ("user_id", "identity_id", "connection_id", "agent_id",
                    "control_plane_session_id"):
         assert banned not in fields, f"出口不应携带 {banned}"

@@ -650,6 +650,13 @@ def test_m_no_rbac_capability_policy_gateway_infra() -> None:
     # （oauth / sso / rbac / scim / jwks / jwt / refresh_token）。
     infra_tokens = ("rbac", "capability", "policy", "gateway", "permission",
                     "secret", "token")
+    # ACP V0.4 Phase 2（精确到**完整模块名**的单点例外）：
+    # `app.domain.artifact_uri_policy` 的**名字**里含 "policy"，但它与授权 /
+    # RBAC / 决策面**无关**——它只是一个**纯 stdlib、零 I/O** 的 URI
+    # **结构与协议**分类器（只判「这个 URI 是否允许作为引用呈现」）。
+    # ADR-4 / ADR-9 的 NON-GOAL 针对的是**授权决策面**；本模块不产生任何
+    # 授权决策、许可集合或决策点。例外**仅限**这一个模块名，其余仍全量禁止。
+    APPROVED_INFRA_NAME_EXCEPTIONS = {"app.domain.artifact_uri_policy"}
     problems: list[str] = []
 
     for py in sorted(APP_DIR.rglob("*.py")):
@@ -664,6 +671,8 @@ def test_m_no_rbac_capability_policy_gateway_infra() -> None:
             pass
         tree = _tree(py)
         for r in _roots(tree):
+            if r in APPROVED_INFRA_NAME_EXCEPTIONS:
+                continue
             if any(tok in r.lower() for tok in infra_tokens):
                 problems.append(f"{py.relative_to(BACKEND_DIR)} imports {r}")
         for node in ast.walk(tree):
@@ -722,7 +731,7 @@ def test_reverse_audit_next_stage_not_smuggled() -> None:
                          "agent_dispatch", "agent_identity", "agents", "bootstrap", "bootstrap_arms",
                          "browser_auth", "channel_inbound",
                          "channels", "connection_conversations", "connections",
-                         "coordinator", "delivery",
+                         "coordinator", "delivery", "delivery_recovery",
                          "driver", "errors", "identities", "identity_resolution",
                          "interaction_observability", "interaction_recording",
                          "routing", "runtime", "session_creation",

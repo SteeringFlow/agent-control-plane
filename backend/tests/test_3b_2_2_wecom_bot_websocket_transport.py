@@ -795,6 +795,9 @@ def _build_chain(db_engine, registry):
 #: 处理态终态（3B-2.6：断言必须等**终态**，不能只等「≠ pending」）。
 _TERMINAL_PROCESSING = (PROCESSING_SUCCEEDED, PROCESSING_FAILED)
 
+#: 投递态终态（P1 / C3：投递是**独立**的一层事实，processing 先落、delivery 后落）。
+_TERMINAL_DELIVERY = (DELIVERY_DELIVERED, DELIVERY_FAILED)
+
 
 def _wait_terminal(uow, channel_id: int, external_id: str, timeout: float = 15.0):
     """轮询等待 interaction 落**终态**。
@@ -802,13 +805,19 @@ def _wait_terminal(uow, channel_id: int, external_id: str, timeout: float = 15.0
     只等「!= pending」是不够的：Worker 会先把行 CAS 成 `processing`，终态在其后
     才写入——于是可能读到中间态 `processing` 并提前返回（3B-2.6 线程模型解耦后
     首次触发该竞态）。
+
+    **P1 / C3 追加**：终态现在分两层——`processing` 先落 SUCCEEDED（Agent 结果
+    已落库），**投递**随后才落 DELIVERED / FAILED。故等待条件必须**同时**等到
+    delivery 终态，否则会读到「Agent 已成功、投递尚未落定」这个合法的中间态。
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         with uow() as u:
             record = u.interactions.find_by_channel_and_external_id(
                 channel_id, external_id)
-        if record is not None and record.processing_status in _TERMINAL_PROCESSING:
+        if record is not None \
+                and record.processing_status in _TERMINAL_PROCESSING \
+                and record.delivery_status in _TERMINAL_DELIVERY:
             return record
         time.sleep(0.05)
     raise AssertionError(f"interaction 未在 {timeout}s 内落终态：{external_id}")
@@ -930,7 +939,10 @@ def test_f2_respond_ack_rejected_state_matrix(db_engine) -> None:
         assert record.failure_stage == "delivery"
         assert record.failure_code == "CHANNEL_DELIVERY_FAILED"
         assert record.retryable is False                          # 应用层明确拒绝
-        assert record.response_payload is None                    # 失败路径不落响应快照
+        # **P1 / C3**：投递失败**不再**丢掉 Agent 已生成的结果——响应快照在
+        # 投递之前就已落库，并原样保留（旧行为：此处恒为 NULL）。
+        assert record.response_payload is not None
+        assert record.response_payload["content"] == "Echo: hello"
     finally:
         transport.stop()
         fake.stop()

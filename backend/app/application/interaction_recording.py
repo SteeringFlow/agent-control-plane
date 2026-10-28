@@ -54,9 +54,14 @@
   （完整成功才落响应快照；Case B 的承载物需未来接线裁决）。
 """
 
+import logging
 from collections.abc import Callable
 from datetime import datetime
 
+from app.application.delivery import (
+    agent_response_from_snapshot,
+    build_outbound_response,
+)
 from app.application.errors import (
     AccessAuthorizationDeniedError,
     AgentDispatchFailedError,
@@ -67,6 +72,7 @@ from app.application.errors import (
     RoutingFailedError,
     SessionResolutionFailedError,
 )
+from app.application.runtime import RuntimeExecutionCoordinator
 from app.domain.activity_record import (
     ACTIVITY_COMPLETED,
     ACTIVITY_RECEIVED,
@@ -83,11 +89,17 @@ from app.domain.activity_record import (
 )
 from app.domain.artifact import Artifact
 from app.domain.inbound_interaction import InboundInteraction
-from app.domain.interaction_snapshot import inbound_to_snapshot
+from app.domain.interaction_snapshot import (
+    inbound_from_snapshot,
+    inbound_to_snapshot,
+)
 from app.domain.interaction_record import (
     DELIVERY_DELIVERED,
+    DELIVERY_DELIVERING,
     DELIVERY_FAILED,
     DELIVERY_PENDING,
+    DELIVERY_PROTOCOL_V1,
+    DELIVERY_UNKNOWN,
     InteractionRecord,
     OutcomeCommit,
     PROCESSING_FAILED,
@@ -121,6 +133,17 @@ STAGE_FAILURE_MAP: dict[type[Exception], tuple[str, str, bool]] = {
 SESSION_LINKED_STAGES = (STAGE_AGENT_DISPATCH, STAGE_DELIVERY)
 
 UNEXPECTED_FAILURE_CODE = "UNEXPECTED_FAILURE"
+
+#: P2 Delivery Lifecycle 的默认值（可由配置覆盖）：
+#: - `max_attempts`：**总** attempt 次数上限（含首次投递）；达上限后不再重投。
+DEFAULT_MAX_DELIVERY_ATTEMPTS = 3
+#: - `lease_seconds`：投递 attempt 的租约长度（秒）。**保守默认值**，
+#:   ⚠️ **尚未经生产实测校准**（待 P4）：租约只覆盖「发帧→ACK」这一段
+#:   （不含 Agent 执行时长），须大于「发送耗时上界 + ACK 窗口 + 余量」。
+#:   ⚠️ 租约**不能**消除重复发送风险：旧 attempt 可能仍在外部调用中。
+DEFAULT_DELIVERY_LEASE_SECONDS = 300
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _snapshot_artifacts(artifacts: list[Artifact] | None) -> list[dict] | None:
@@ -160,7 +183,9 @@ class PersistingCoordinator:
 
         create_pending(inbound)            → PENDING 落库 + received（COMMIT）
         claim_processing(id)               → PENDING → PROCESSING（CAS，COMMIT）
-        record_success(id, result)         → 成功终态（COMMIT）
+        record_agent_success(id, result)   → Agent 成功（结果落库；P1 / C3）
+        record_outbound_success(id, …)     → 投递成功终态（processing 不改写）
+        record_outbound_failure(id, exc, …)→ 投递失败终态（processing 不改写）
         record_failure(id, inbound, exc)   → 失败终态（COMMIT）
         reclaim_stale_processing(thr)      → PROCESSING 孤儿回收 → PENDING
                                              （12.9.4.12，独立短事务）
@@ -205,15 +230,17 @@ class PersistingCoordinator:
                 f"interaction_id={interaction_id} 未被 claim（该行已不是 PENDING），"
                 "拒绝执行")
         started_at = self._read_started_at(interaction_id)
+        # P1 / C1：与 Worker 路径**共用**同一份编排（Agent 结果落库 → 投递 →
+        # 投递结果落定）——避免出现两套会漂移的顺序。
         try:
             result = self._inner.execute(inbound)
         except Exception as exc:  # noqa: BLE001  typed 映射 + 兜底，记录后 re-raise
             self.record_failure(
-                interaction_id, inbound, exc,
-                expected_started_at=started_at)
+                interaction_id, inbound, exc, expected_started_at=started_at)
             raise
-        self.record_success(interaction_id, result,
-                            expected_started_at=started_at)
+        self.record_agent_success_and_deliver(
+            self._inner, inbound, result,
+            interaction_id=interaction_id, expected_started_at=started_at)
         return result
 
     # ------------------------------------------------------------------ phase 0
@@ -285,28 +312,39 @@ class PersistingCoordinator:
 
     # ------------------------------------------------------------------ phase 3
 
-    def record_success(
+    def record_agent_success(
         self,
         interaction_id: int,
         result: RuntimeExecutionResult,
         *,
         expected_started_at: datetime | None = None,
     ) -> OutcomeCommit:
-        """phase 3（成功）：成功终态——一切执行事实来自 RuntimeExecutionResult。
+        """phase 3a（**Agent 成功**，P1 / C3）：先落结果，投递**之后**才发生。
 
-        - `session_id` 取 Result（**不再由 wrapper 查询推导**）；
-        - `response_payload` = AgentResponse 原样快照（10.7.2 B 裁决）；
-        - `sessions.external_session_id` 由 `agent_response.external_session_id`
-          绑定（Agent 侧会话映射的唯一写入点；None 不写入、不清空）；
-        - session_created Evidence 由 `result.session_mode` 直接判定
-          （Evidence = 事实，不再靠「执行前后快照」推导）；
-        - `expected_started_at`（12.9.4.12）：attempt fence 等式值，原样透传。
+        这是 P1 的核心事实落地点——**在任何外部投递之前**：
+
+        - `processing_status` = SUCCEEDED（Agent 确实完成了任务）；
+        - `delivery_status` = **PENDING**（投递**尚未发生**——「Agent 已成功」
+          ≠「外部消息已送达」，两者必须能被分别观察）；
+        - `response_payload` = AgentResponse 原样快照（10.8.4 / 10.7.2 B）；
+        - `session_id` 回填 + `sessions.external_session_id` 绑定；
+        - session_created Evidence（仅 CREATE_NEW 时——REUSE 不凭空制造）。
+
+        **不**写 interaction_completed Evidence：那是**投递完成**的事实，
+        由 `record_outbound_success` 落。
+
+        ⚠️ 本方法**不回滚、不清除**任何已落库事实；投递失败时
+        `response_payload` 原样保留（生产曾因投递失败而丢结果）。
         """
         with self._uow_factory() as uow:
             commit = uow.interactions.record_outcome(
                 interaction_id,
                 processing_status=PROCESSING_SUCCEEDED,
-                delivery_status=DELIVERY_DELIVERED,
+                delivery_status=DELIVERY_PENDING,
+                # P2：协议世代 = 1（新协议行）。只有 protocol=1 的行，其
+                # `delivery_attempts=0` 才**可**被读作「从未尝试过投递」；
+                # 历史行（protocol=0）一律禁止自动重投。
+                delivery_protocol=DELIVERY_PROTOCOL_V1,
                 session_id=result.session_id,
                 response_payload={
                     "content": result.agent_response.content,
@@ -336,12 +374,281 @@ class PersistingCoordinator:
                     session_id=result.session_id,
                     metadata={"session_id": result.session_id},
                 ))
+            uow.commit()
+        return commit
+
+    def record_outbound_success(
+        self,
+        interaction_id: int,
+        *,
+        session_id: int | None = None,
+        expected_delivery_attempts: int,
+    ) -> OutcomeCommit:
+        """phase 3b（**投递成功**，P1 / C3）：投递终态单独落定。
+
+        - `delivery_status` = DELIVERED；
+        - `processing_status` **不改写**（Agent 早已 SUCCEEDED）；
+        - 响应快照**不触碰**（结果已在 3a 落库）；
+        - interaction_completed Evidence（stage=delivery）。
+
+        **P2 围栏**：投递终态由 **attempt 身份**裁决——`delivery_status='delivering'`
+        且 `delivery_attempts=:expected_delivery_attempts`（单调计数 ⇒ 旧 attempt
+        的迟到写入必然失配 ⇒ **写不穿**新 attempt）。
+        rowcount == 0 → REJECTED（已被记录 / 状态不符，正常竞争结果，不抛）。
+        """
+        with self._uow_factory() as uow:
+            commit = uow.interactions.record_outcome(
+                interaction_id,
+                processing_status=PROCESSING_SUCCEEDED,
+                delivery_status=DELIVERY_DELIVERED,
+                session_id=session_id,
+                expected_processing_status=PROCESSING_SUCCEEDED,
+                expected_delivery_status=DELIVERY_DELIVERING,
+                expected_delivery_attempts=expected_delivery_attempts,
+            )
+            if commit is OutcomeCommit.REJECTED:
+                uow.commit()
+                return commit
             uow.activities.append(ActivityRecord(
                 type=ACTIVITY_COMPLETED, stage=STAGE_DELIVERY,
                 status="succeeded", interaction_id=interaction_id,
-                session_id=result.session_id))
+                session_id=session_id))
             uow.commit()
         return commit
+
+    def record_outbound_failure(
+        self,
+        interaction_id: int,
+        exc: Exception,
+        *,
+        session_id: int | None = None,
+        expected_delivery_attempts: int,
+    ) -> OutcomeCommit:
+        """phase 3c（**投递失败**，P1 / C3）：投递终态单独落定。
+
+        - `delivery_status` = FAILED；
+        - 失败三元组（failure_stage / failure_code / retryable）由既有
+          `STAGE_FAILURE_MAP` 映射（不新造错误码：仍是 CHANNEL_DELIVERY_FAILED）；
+        - `processing_status` **不改写**（Agent 已成功 —— 投递失败**不是**
+          执行失败）；
+        - 响应快照**不触碰**（Agent 已生成的结果原样保留）；
+        - stage_failure Evidence（stage=delivery）。
+
+        **结果已知性（P2）**：投递失败分两类，落库状态不同——
+        - `outcome_known=True`（**可确认未送达**：企微明确拒绝 / 契约类失败 /
+          无活连接）→ `delivery_status='failed'`；其中 `retryable=True` 且
+          协议世代为 1 的行**才**进入恢复驱动的重投白名单；
+        - `outcome_known=False`（**结果未知**：ACK 超时 / 发送异常——帧可能
+          已被渠道接受）→ `delivery_status='unknown'` ⇒ **永不自动重投**
+          （`unknown` **结构上**不在重投白名单内，不靠约定）。
+
+        ⚠️ `retryable` **单独不充分**：只有「状态是 failed（结果已知）」+
+        「retryable=True」+「协议世代=1」三者同时成立才可重投。
+        """
+        stage, code, retryable = STAGE_FAILURE_MAP.get(
+            type(exc), (None, UNEXPECTED_FAILURE_CODE, False))
+        # 12.8.2：实例级 retryable 覆盖（与 record_failure 同一纪律）。
+        retryable = bool(getattr(exc, "retryable", retryable))
+        # P0 的 outcome_known：结果是否**已知**（默认 True = 明确未送达）。
+        outcome_known = bool(getattr(exc, "outcome_known", True))
+        delivery = DELIVERY_FAILED if outcome_known else DELIVERY_UNKNOWN
+        with self._uow_factory() as uow:
+            commit = uow.interactions.record_outcome(
+                interaction_id,
+                processing_status=PROCESSING_SUCCEEDED,
+                delivery_status=delivery,
+                failure_stage=stage,
+                failure_code=code,
+                retryable=retryable,
+                session_id=session_id,
+                expected_processing_status=PROCESSING_SUCCEEDED,
+                expected_delivery_status=DELIVERY_DELIVERING,
+                expected_delivery_attempts=expected_delivery_attempts,
+            )
+            if commit is OutcomeCommit.REJECTED:
+                uow.commit()
+                return commit
+            uow.activities.append(ActivityRecord(
+                type=ACTIVITY_STAGE_FAILURE, stage=stage, status="failed",
+                message=str(exc),
+                metadata={"failure_code": code, "retryable": retryable,
+                          "outcome_known": outcome_known},
+                interaction_id=interaction_id, session_id=session_id))
+            uow.commit()
+        return commit
+
+    # ------------------------------------------------------------------ C1/C3 编排
+
+    def record_agent_success_and_deliver(
+        self,
+        runtime: RuntimeExecutionCoordinator,
+        inbound: InboundInteraction,
+        result: RuntimeExecutionResult,
+        *,
+        interaction_id: int,
+        expected_started_at: datetime | None = None,
+        max_attempts: int = DEFAULT_MAX_DELIVERY_ATTEMPTS,
+        lease_seconds: int = DEFAULT_DELIVERY_LEASE_SECONDS,
+    ) -> None:
+        """C1/C3 编排：**Agent 成功结果落库 → 外部投递 → 投递结果落定**。
+
+        顺序**不可颠倒**：
+
+        1. 先把 Agent 结果落库（响应快照 / session 归属）——投递失败**不得**
+           回滚或清除它（生产曾因此丢掉整条答案）；
+        2. 再组装出站消息（`build_outbound_response`，纯函数、单一事实源）并
+           发起外部投递（**事务之外**——12.9.3.4 §D）；
+        3. 最后把投递结果**单独**落定（成功 / 失败）——processing 不被改写。
+
+        投递失败照旧原样抛出（异常通道本身就是执行事实通道），但**先**把
+        delivery=FAILED 记下来。
+
+        **M1 围栏闸门（P1.1）**：第 1 步若返回 `REJECTED`（ownership lost——
+        本 attempt 已被 `reclaim_stale_processing` 回收、由新 attempt 接管），
+        则**立即停止投递**。理由有两条，缺一不可：
+
+        1. 旧 attempt 的答案**已过期**（Agent 可能已被重跑）→ 发出去是
+           **重复且陈旧**的用户消息；
+        2. 投递结果也**写不进**新 attempt 的行（围栏等式失配）→「已送达」与
+           「未送达」在库里不可区分 → 任何恢复消费者都会误判。
+
+        该分支**不**伪装成 Delivery 失败：**不**写 delivery=FAILED、**不**抛
+        `ChannelDeliveryFailedError`（ownership lost 是**正常竞争结果**，
+        12.9.4.11 §3，与「投递失败」是不同事实）。也**不**写任何 Evidence：
+        Evidence 没有所有权围栏，往同一 interaction 追加会污染**新 attempt**
+        的时间线（10.7.1 b1：Evidence 类型面冻结 4 种，且只记真正观察到的事实）。
+        证据只留一条 WARNING 日志——日志不进 Evidence 面，也不改任何状态。
+        """
+        commit = self.record_agent_success(
+            interaction_id, result, expected_started_at=expected_started_at)
+        if commit is OutcomeCommit.REJECTED:
+            LOGGER.warning(
+                "delivery skipped: agent success fence rejected (ownership lost) "
+                "interaction_id=%s — 旧 attempt 不投递（避免重复/陈旧消息）",
+                interaction_id)
+            return
+        # ★ P2：统一投递闸门——**首次投递**与**恢复投递**共用同一原子 claim。
+        #    没有成功 claim ⇒ 绝不调用 runtime.deliver（外部 I/O）。
+        attempt = self.claim_delivery(
+            interaction_id, include_failed=False,
+            max_attempts=max_attempts, lease_seconds=lease_seconds)
+        if attempt is None:
+            LOGGER.warning(
+                "delivery skipped: delivery claim lost (ownership lost) "
+                "interaction_id=%s — 未取得投递权，不投递",
+                interaction_id)
+            return
+        outbound = build_outbound_response(inbound, result.agent_response)
+        try:
+            runtime.deliver(outbound)
+        except Exception as exc:  # noqa: BLE001  投递失败：单独记录，不回滚结果
+            self._record_delivery_failure(
+                interaction_id, exc, attempt=attempt,
+                session_id=result.session_id)
+            raise
+        self.record_outbound_success(
+            interaction_id, session_id=result.session_id,
+            expected_delivery_attempts=attempt)
+
+    def _record_delivery_failure(
+        self, interaction_id: int, exc: Exception, *, attempt: int,
+        session_id: int | None,
+    ) -> None:
+        """投递失败落库 + **异常保真**（P2）。
+
+        - 写库成功 → 正常记录失败终态（processing 不被改写、结果快照保留）；
+        - 写库**失败** → **不得**伪装成「终态已持久化」：行**停在**
+          `delivering`（租约到期后由回收转为 `unknown` ⇒ 人工裁决），
+          并把**原始投递异常**作为抛出类型、**数据库异常**作为 `__cause__`
+          （两个异常都在 traceback 里），另记一条 ERROR 日志。
+        - **不**在写库失败时伪造 Evidence（DB 正在失败，且 Evidence 无围栏）。
+        """
+        try:
+            self.record_outbound_failure(
+                interaction_id, exc, session_id=session_id,
+                expected_delivery_attempts=attempt)
+        except Exception as db_exc:  # noqa: BLE001  写库失败：不伪装成已记录
+            LOGGER.exception(
+                "delivery outcome NOT persisted: delivery_failed=%s "
+                "db_write_failed=%s interaction_id=%s attempt=%s — 结果未知且"
+                "状态未更新（租约到期后转 unknown，需人工裁决）",
+                type(exc).__name__, type(db_exc).__name__, interaction_id, attempt)
+            raise exc from db_exc
+
+    # ------------------------------------------------------------------ P2 投递级 phase
+
+    def claim_delivery(
+        self,
+        interaction_id: int,
+        *,
+        include_failed: bool = False,
+        max_attempts: int = DEFAULT_MAX_DELIVERY_ATTEMPTS,
+        lease_seconds: int = DEFAULT_DELIVERY_LEASE_SECONDS,
+    ) -> int | None:
+        """P2：**原子**取得投递权（首次投递与失败重投共用）。
+
+        返回本次 attempt 号；`None` = 未取得（rowcount != 1）——调用方**必须**
+        停止外部投递（正常竞争结果，不抛异常）。
+        """
+        with self._uow_factory() as uow:
+            attempt = uow.interactions.claim_delivery(
+                interaction_id, max_attempts=max_attempts,
+                lease_seconds=lease_seconds, include_failed=include_failed)
+            uow.commit()
+        return attempt
+
+    def find_undelivered(
+        self, limit: int = 10, *,
+        max_attempts: int = DEFAULT_MAX_DELIVERY_ATTEMPTS,
+    ) -> list[InteractionRecord]:
+        """P2：恢复候选（**纯读**）——白名单只有「首次投递」与「失败重投」两类。
+
+        `unknown` / `delivering` / `delivered` 与历史行（`protocol=0`）
+        **结构上**不会出现在这里。
+        """
+        with self._uow_factory() as uow:
+            return uow.interactions.find_undelivered(
+                limit, max_attempts=max_attempts)
+
+    def reclaim_stale_delivery(self, threshold_seconds: int) -> int:
+        """P2：回收**租约过期**的在途投递 → `unknown`（**绝不**退回 `pending`）。"""
+        with self._uow_factory() as uow:
+            reclaimed = uow.interactions.reclaim_stale_delivery(threshold_seconds)
+            uow.commit()
+        return reclaimed
+
+    def recover_delivery(self, record: InteractionRecord) -> bool:
+        """P2 恢复投递：**claim → 重建出站消息 → 投递 → 落终态**（不重跑 Agent）。
+
+        - 只用**已落库**的 `response_payload` + 入站快照重建信封 ⇒ **绝不**重跑
+          Agent、绝不触 Runtime 的前六段；
+        - **必须先 claim**：claim 失败（rowcount≠1）⇒ 返回 False、**不投递**；
+        - 投递失败 → 落 `failed`（结果已知）或 `unknown`（结果未知），异常照旧上抛。
+
+        返回 True = 本次真的发起了投递；False = 未取得投递权（正常竞争）。
+        """
+        attempt = self.claim_delivery(
+            record.id, include_failed=True,
+            max_attempts=DEFAULT_MAX_DELIVERY_ATTEMPTS,
+            lease_seconds=DEFAULT_DELIVERY_LEASE_SECONDS)
+        if attempt is None:
+            LOGGER.info(
+                "delivery recovery skipped: claim lost interaction_id=%s",
+                record.id)
+            return False
+        inbound = inbound_from_snapshot(record.request_payload)
+        agent_response = agent_response_from_snapshot(record.response_payload)
+        outbound = build_outbound_response(inbound, agent_response)
+        try:
+            self._inner.deliver(outbound)
+        except Exception as exc:  # noqa: BLE001  投递失败：单独记录，不回滚结果
+            self._record_delivery_failure(
+                record.id, exc, attempt=attempt, session_id=record.session_id)
+            raise
+        self.record_outbound_success(
+            record.id, session_id=record.session_id,
+            expected_delivery_attempts=attempt)
+        return True
 
     def record_failure(
         self,

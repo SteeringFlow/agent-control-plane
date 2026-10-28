@@ -1,5 +1,7 @@
 # Step 11.5 — Agent Management UI
 
+> **OSS 发布说明**：本文为历史实现记录；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 > **第一条 Control Plane Management UX Vertical Slice。**
 > 交付物 = frontend/ 三件套（生产代码）+ 组合根 1 处最小装配 + 本报告 +
 > 语义守护测试（10 项）。最终全量回归：**1004 passed**。

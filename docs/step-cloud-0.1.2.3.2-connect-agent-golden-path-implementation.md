@@ -1,5 +1,7 @@
 # Cloud-0.1.2.3.2 —— Connect Agent Golden Path Implementation
 
+> **OSS 发布说明**：本文为历史实现记录；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 > 基线：Cloud-0.1.2.3（Connect Agent Golden Path Gate，GO：纯编排 / 接纳孤儿 Agent）
 > → Cloud-0.1.2.3.1（Agent Endpoint Contract Alignment，GO）
 > → Cloud-0.1.2.3.1.1（endpoint 空白归一化，已落地）

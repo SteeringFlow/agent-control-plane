@@ -375,7 +375,8 @@ def test_c4_case_b_response_payload_stays_null(db_engine) -> None:
 
     row = _interaction_rows(db_engine)[0]
     assert (row.processing_status, row.delivery_status) == ("succeeded", "failed")
-    assert row.response_payload is None               # 失败路径无 Result
+    assert row.response_payload is not None                # P1/C3
+    assert row.response_payload["content"] == "echo:hello"
     assert row.retryable is True
 
 

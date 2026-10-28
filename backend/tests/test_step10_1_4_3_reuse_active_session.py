@@ -55,6 +55,7 @@ from app.domain.session_resolution import CREATE_NEW, REUSE_ACTIVE
 from app.domain.user import User
 from app.persistence.models.session import SessionModel
 from app.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.delivery_lifecycle_helper import DeliveringCoordinator
 
 
 # ------------------------------------------------------------------ 测试底座
@@ -126,7 +127,7 @@ def _seed(db_engine) -> dict[str, int]:
 
 def _coordinator(db_engine, session_resolution, agent_adapter, channel_adapter) -> RuntimeCoordinator:
     uow = _uow_factory(db_engine)
-    return RuntimeCoordinator(
+    return DeliveringCoordinator(RuntimeCoordinator(
         identity_resolution=IdentityResolutionExecutor(uow),
         access_authorization=AccessAuthorizationExecutor(uow),
         routing=RoutingExecutor(uow),
@@ -135,7 +136,7 @@ def _coordinator(db_engine, session_resolution, agent_adapter, channel_adapter) 
         agent_dispatch=AgentDispatchExecutor(agent_adapter=agent_adapter,
                                              uow_factory=uow),
         delivery=DeliveryExecutor(channel_adapter=channel_adapter),
-    )
+    ))
 
 
 def _inbound(channel_id: int, conversation: str, interaction_id: str,

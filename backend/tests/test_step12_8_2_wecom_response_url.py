@@ -59,6 +59,7 @@ from app.domain.outbound_response import OutboundResponse
 from app.domain.routing_result import RoutingResult
 from app.domain.session_resolution import REUSE_ACTIVE, SessionResolution
 from app.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.delivery_lifecycle_helper import DeliveringCoordinator
 
 ROBOT_URL = "https://qyapi.weixin.qq.com/cgi-bin/aibot/response?response_code=CODE123"
 TOKEN = "robot-token"
@@ -322,12 +323,14 @@ def _coordinator(agent_response: AgentResponse):
     identity, routing = _FakeIdentityResolution(), _FakeRouting()
     session_res, session_cre = _FakeSessionResolution(), _FakeSessionCreation()
     dispatch, delivery = _FakeDispatch(agent_response), _FakeDelivery()
-    return RuntimeCoordinator(
+    # P1 / C1：投递是**显式**的第 7 段（execute() 只到 Dispatch）——测试替身
+    # 把两段接起来，保持「一次完整交互」的语义不变。
+    return DeliveringCoordinator(RuntimeCoordinator(
         identity_resolution=identity, access_authorization=_FakeAuthorization(),
         routing=routing,
         session_resolution=session_res, session_creation=session_cre,
         agent_dispatch=dispatch, delivery=delivery,
-    ), (identity, routing, session_res, session_cre, dispatch, delivery)
+    )), (identity, routing, session_res, session_cre, dispatch, delivery)
 
 
 def _inbound(metadata=None) -> InboundInteraction:
@@ -686,11 +689,34 @@ def test_f3_expired_response_url_state_matrix_via_real_adapter(
     patched_urlopen(status=200, body=json.dumps(
         {"errcode": 60140, "errmsg": "invalid response code"}).encode("utf-8"))
 
+    # P1 / C3：Agent 成功结果**先落库**（含 session 关联）→ 投递失败也保留。
+    # 因此本测试需要一条**真实存在**的 Session（FK 约束）——故就地播种。
+    from app.domain.identity import Identity
+    from app.domain.session import Session as SessionEntity
+    from app.domain.user import User
+    with _uow_factory(db_engine)() as uow:
+        user = uow.users.create(User(name="zhangsan"))
+        identity = uow.identities.create(Identity(
+            user_id=user.id, channel_id=channel_id, external_id="zhangsan"))
+        session = uow.sessions.create(SessionEntity(
+            identity_id=identity.id, channel_id=channel_id,
+            external_conversation_id="zhangsan", status="active"))
+        uow.commit()
+        session_id = session.id
+
+    class _RealSessionResolution:
+        def execute(self, identity_id, connection_id, external_conversation_id):
+            return SessionResolution(
+                mode=REUSE_ACTIVE, identity_id=identity_id,
+                connection_id=connection_id,
+                external_conversation_id=external_conversation_id,
+                existing_session_id=session_id)
+
     coordinator = RuntimeCoordinator(
         identity_resolution=_FakeIdentityResolution(),
         access_authorization=_FakeAuthorization(),
         routing=_FakeRouting(),
-        session_resolution=_FakeSessionResolution(),
+        session_resolution=_RealSessionResolution(),
         session_creation=_FakeSessionCreation(),
         agent_dispatch=_FakeDispatch(AgentResponse(content=CONTENT)),
         delivery=DeliveryExecutor(channel_adapter=WeComAdapter()),   # 真实 Adapter

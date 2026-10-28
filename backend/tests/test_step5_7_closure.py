@@ -104,6 +104,12 @@ def test_a1_directory_boundaries_are_clean() -> None:
         "activity_record.py", "agent.py", "agent_probe_snapshot.py",
         "agent_request.py",
         "agent_response.py", "artifact.py",
+        # ACP V0.3 Phase 1：Artifact 引用呈现渲染器（纯 domain 呈现层，
+        #  只做「引用式」渲染——不落库、不抓取、不存储）
+        "artifact_reference.py",
+        # ACP V0.4 Phase 2：Artifact URI 策略分类器（纯 stdlib、零 I/O；
+        #  只判 URI 的结构与协议是否允许呈现——不探测、不取回、不授权）
+        "artifact_uri_policy.py",
         # M6.6-C3 / ADR-12：Bootstrap Arm 领域实体（不落 tenant_id，纪律同 Grant）
         "bootstrap_arm.py",
         "channel.py", "connection.py",

@@ -89,7 +89,8 @@ def test_frozen_contract_shapes_unchanged() -> None:
     assert _field_names(AgentResponse) == {
         "content", "external_session_id", "metadata", "artifacts"}
     assert _field_names(OutboundResponse) == {
-        "channel_id", "external_conversation_id", "content", "metadata"}
+        "channel_id", "external_conversation_id", "content", "metadata",
+        "artifacts"}
     assert {"channel_id", "agent_id", "credential_ref", "config"} <= \
         _field_names(Connection)
 

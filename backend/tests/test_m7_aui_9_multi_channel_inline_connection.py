@@ -597,16 +597,28 @@ def test_b35_first_time_empty_state_shows_only_add_entries() -> None:
 @needs_node
 def test_b36_panel_toggle_add_and_edit() -> None:
     """M7-AUI-10.4 需求③④：「+ 添加」再点收起；「编辑」打开后再点收起；
-    编辑面板标题 =「编辑渠道 / 编辑 Agent」。"""
+    编辑面板标题 =「编辑渠道：<对象名> / 编辑 Agent」（M7-AUI-10.6.2-A：
+    面板标题始终显示实际对象名）。"""
     out = _run("toggles")
     assert out["addChannelOpen"] == {"panel": True, "title": "添加渠道"}
     assert out["addChannelClosed"]["panel"] is False
-    assert out["editChannelOpen"] == {"panel": True, "title": "编辑渠道"}
+    assert out["editChannelOpen"] == {"panel": True, "title": "编辑渠道：企业微信"}
     assert out["editChannelClosed"]["panel"] is False
     assert out["addAgentOpen"] == {"panel": True, "title": "添加 Agent"}
     assert out["addAgentClosed"]["panel"] is False
-    assert out["editAgentOpen"] == {"panel": True, "title": "编辑 Agent"}
+    assert out["editAgentOpen"] == {"panel": True, "title": "编辑 Agent：WorkBuddy"}
     assert out["editAgentClosed"]["panel"] is False
+
+
+@needs_node
+def test_b36_edit_channel_title_without_resolved_object() -> None:
+    """M7-AUI-10.6.2-A：编辑入口**解析不到当前渠道**时 → 标题回落为「编辑渠道」。
+
+    面板标题只在解析到真实对象时才带对象名；解析失败必须显示通用标题并就地
+    报错（不得伪造对象名，也不得静默新建）。
+    """
+    out = _run("toggles", channels=[])
+    assert out["editChannelOpen"] == {"panel": True, "title": "编辑渠道"}
 
 
 @needs_node

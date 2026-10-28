@@ -408,7 +408,8 @@ def test_s3_delivery_failure_story_reconstructed_via_api_only(db_engine) -> None
     assert detail["failure_code"] == "CHANNEL_DELIVERY_FAILED"
     assert detail["retryable"] is True
     assert detail["session_id"] == g["session"]   # 失败已发生在 Session 确定后
-    assert detail["response_payload"] is None     # 失败路径没有响应（不可伪造）
+    assert detail["response_payload"] is not None       # P1/C3
+    assert detail["response_payload"]["content"].startswith("echo:")
     # 执行故事：received → stage_failure（无 completed——失败路径不写完成 Evidence）
     types = _timeline_types(detail["activities"])
     assert types == ["interaction_received", "stage_failure"]

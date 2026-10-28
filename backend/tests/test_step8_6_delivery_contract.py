@@ -46,7 +46,10 @@ INBOUND_PY = APP_DIR / "domain" / "inbound_interaction.py"
 FAILURE_PY = APP_DIR / "domain" / "dispatch_failure.py"
 
 # OutboundResponse = Channel 可理解的交还消息（Delivery 输出）
-OUTBOUND_FIELDS = {"channel_id", "external_conversation_id", "content", "metadata"}
+# ACP V0.3 Phase 1：+ artifacts（Agent 产出的**引用**，可选加性字段，默认 None）——
+# 契约见 docs/step-acp-v0.3-artifact-outbound-implementation-gate.md §1.2.2 / §5.2。
+OUTBOUND_FIELDS = {"channel_id", "external_conversation_id", "content", "metadata",
+                    "artifacts"}
 # 结构化禁入字段：Delivery 不重新选路 / 不重新归属（不许塞进 metadata 偷渡）
 FORBIDDEN_FIELDS = {
     "user_id", "identity_id", "session_id", "connection_id", "agent_id",
@@ -86,6 +89,24 @@ DELIVERY_SCOPE_ALLOWED = {
     ("app/adapters/agents/local.py", "LocalAgentAdapter"),
     ("app/adapters/agents/registry.py", "MultiAgentAdapter"),
     ("app/adapters/channels/local.py", "LocalChannelAdapter"),
+    # P2 Delivery Recovery：投递恢复职责（G3 已批准）。它**不是**新的
+    # Delivery 通道组件：DeliveryExecutor / ChannelAdapter 契约逐字未动，
+    # 恢复只是「已落库结果的再投递」，复用同一 DeliveryExecutor 与
+    # 同一 ChannelAdapter Port ⇒ 精确放行这些名字，不放开 token。
+    ("app/application/delivery_recovery.py", "DeliveryRecoveryDriver"),
+    ("app/application/delivery_recovery.py", "DeliveryRecoveryConfig"),
+    ("app/application/delivery_recovery.py", "DeliveryRecoverySource"),
+    ("app/application/delivery_recovery.py", "DeliveryRecoveryExecutor"),
+    ("app/application/delivery_recovery.py", "recover_delivery"),
+    ("app/application/delivery_recovery.py", "reclaim_stale_delivery"),
+    ("app/application/interaction_recording.py", "claim_delivery"),
+    ("app/application/interaction_recording.py", "recover_delivery"),
+    ("app/application/interaction_recording.py", "reclaim_stale_delivery"),
+    ("app/application/interaction_recording.py", "_record_delivery_failure"),
+    ("app/repositories/interaction_record.py", "claim_delivery"),
+    ("app/repositories/interaction_record.py", "reclaim_stale_delivery"),
+    ("app/persistence/repositories/interaction_record.py", "claim_delivery"),
+    ("app/persistence/repositories/interaction_record.py", "reclaim_stale_delivery"),
     ("app/adapters/channels/registry.py", "MultiChannelAdapter"),
 }
 
@@ -168,7 +189,10 @@ def test_a_module_pure() -> None:
 
 
 def test_a_field_face_frozen() -> None:
-    """OutboundResponse 字段面 = 恰好 4 个（channel 侧交还消息，结构化锁死）。"""
+    """OutboundResponse 字段面 = 恰好 5 个（channel 侧交还消息，结构化锁死）。
+
+    ACP V0.3 Phase 1：+ `artifacts`（出站专属的成果**引用**轴）。
+    """
     cls = _module_class(OUTBOUND_PY, "OutboundResponse")
     assert _is_frozen_dataclass(cls), "OutboundResponse 应为 frozen dataclass"
     anns = _annassigns(cls)
@@ -231,9 +255,17 @@ def test_b_no_routing_reselection_fields() -> None:
 
 
 def test_c_inbound_outbound_symmetric() -> None:
-    """OutboundResponse ⊂ InboundInteraction：共享 channel 侧字段；
-    ingress 专属 identity/trace 字段（external_interaction_id / external_identity_id）
-    不回流到出口。"""
+    """OutboundResponse 与 InboundInteraction 的**双向**字段差（ACP V0.3 Phase 1）。
+
+    共享 channel 侧字段；ingress 专属 identity/trace 字段
+    （external_interaction_id / external_identity_id）**不回流**到出口；
+    出口另有一个**出站专属**轴：Agent 产出的成果**引用** `artifacts`。
+
+    修订自 V0.2 的单向等式 `outbound == inbound - {ingress 专属字段}`——
+    该等式在加入出站专属字段后不再成立，改为**显式声明双向差**（更严格：
+    两侧的差异都被逐项锁死，杜绝「悄悄多出第三个差异」）。
+    契约见 docs/step-acp-v0.3-artifact-outbound-implementation-gate.md §1.2.2。
+    """
     from app.domain.inbound_interaction import InboundInteraction
     from app.domain.outbound_response import OutboundResponse
 
@@ -241,9 +273,11 @@ def test_c_inbound_outbound_symmetric() -> None:
     outbound = {f.name for f in dataclasses.fields(OutboundResponse)}
     # 共享 channel 侧最小面
     assert {"channel_id", "external_conversation_id", "content", "metadata"} <= inbound
-    # Outbound = Inbound 减去 ingress 专属字段
-    assert outbound == inbound - {"external_interaction_id", "external_identity_id"}, \
+    # 双向差显式声明：ingress 专属 → 不回流；outbound 专属 → 只有 artifacts
+    assert inbound - outbound == {"external_interaction_id", "external_identity_id"}, \
         f"对称关系漂移：inbound={inbound} outbound={outbound}"
+    assert outbound - inbound == {"artifacts"}, \
+        f"出站专属轴漂移（应恰为 artifacts）：inbound={inbound} outbound={outbound}"
     # 两模块都纯 stdlib
     for py in (INBOUND_PY, OUTBOUND_PY):
         assert _roots(_tree(py)) == {"dataclasses"}, py.relative_to(BACKEND_DIR)
@@ -251,7 +285,14 @@ def test_c_inbound_outbound_symmetric() -> None:
 
 def test_c_agent_response_not_merged_with_outbound() -> None:
     """AgentResponse 与 OutboundResponse 不合并：Agent-side reference
-    （external_session_id）不进 Channel 交还消息；channel 归属不进 Agent 响应。"""
+    （external_session_id）不进 Channel 交还消息；channel 归属不进 Agent 响应。
+
+    ACP V0.3 Phase 1（Q1 = A）：字段交集由 {content, metadata} 扩为
+    {content, metadata, artifacts}——`artifacts` 同时属于 AgentResponse 与
+    OutboundResponse（出站消息携带 agent 产出的引用，**正是**两者共享该概念的
+    体现）。**被守住的语义边界不变**：归属字段不得交叉。契约见
+    docs/step-acp-v0.3-artifact-outbound-implementation-gate.md §1.2.3。
+    """
     from app.domain.agent_response import AgentResponse
     from app.domain.outbound_response import OutboundResponse
 
@@ -259,7 +300,10 @@ def test_c_agent_response_not_merged_with_outbound() -> None:
     outbound = {f.name for f in dataclasses.fields(OutboundResponse)}
     assert "external_session_id" not in outbound
     assert not (agent & {"channel_id", "external_conversation_id", "agent_id"})
-    assert agent & outbound == {"content", "metadata"}
+    assert agent & outbound == {"content", "metadata", "artifacts"}
+    # 归属字段的**双向**不交叉（显式声明，杜绝悄悄多出第二处交叉）
+    assert outbound - agent == {"channel_id", "external_conversation_id"}
+    assert agent - outbound == {"external_session_id"}
 
 
 # ================================================================== D ChannelAdapter 边界

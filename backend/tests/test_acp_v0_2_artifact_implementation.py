@@ -269,20 +269,44 @@ def test_dod7_minimal_wire_unchanged_with_artifacts_present() -> None:
 # ================================================================== 无扩张证明（Delivery/SSE/DB/Runtime）
 
 
-def test_no_expansion_artifact_not_in_delivery(db_engine) -> None:
-    """Artifact 不进 Delivery：OutboundResponse 无 artifacts 字段，投递内容不变。"""
-    assert "artifacts" not in {f.name for f in fields(OutboundResponse)}
+def test_artifact_enters_delivery_as_reference(db_engine) -> None:
+    """ACP V0.3 Phase 1：Artifact **进** Delivery（引用式），不改变文本投递语义。
+
+    翻转自 V0.2 的「Artifact 不进 Delivery」——该边界由 ACP V0.3 契约取代
+    （`docs/step-acp-v0.3-artifact-outbound-implementation-gate.md` §1.2.2 / §5.2 /
+    §9.2 Q1）。**翻转的是「进不进 Delivery」这一条**；其余保护性断言**全部保留**：
+    - 文本投递内容**不变**（`content` 仍是 Agent 的文本主体）；
+    - 引用以**结构化引用**随交付载荷透传（`artifacts`），**不**渲染进 `content`
+      ——**逐渠道呈现由 Channel Adapter 决定**（见 Gate §4.1 P3 / P4）；
+    - Artifact 快照语义不变（`response_payload` 仍是完整原值）。
+    """
+    assert "artifacts" in {f.name for f in fields(OutboundResponse)}
     g = _seed(db_engine)
     channel = _RecordingChannelStub()
+    artifacts = [_sample_artifact()]
     _wrapped_runtime(
-        db_engine, agent_adapter=_ArtifactAgentAdapter([_sample_artifact()]),
+        db_engine, agent_adapter=_ArtifactAgentAdapter(artifacts),
         channel_adapter=channel,
     ).execute(_inbound(g["channel"]))
 
     assert len(channel.deliveries) == 1
     delivered = channel.deliveries[0]
+    assert delivered.content == "echo:hello"          # 文本主体不变
+    assert delivered.artifacts == artifacts             # 引用被透传（保真）
+    assert "spec.pdf" not in delivered.content          # 引用**未**被渲染进文本
+
+
+def test_no_artifact_delivery_is_byte_identical(db_engine) -> None:
+    """无 Artifact 时：出站载荷**逐字节**不变（`artifacts is None`，无新增键）。"""
+    g = _seed(db_engine)
+    channel = _RecordingChannelStub()
+    _wrapped_runtime(db_engine, channel_adapter=channel).execute(
+        _inbound(g["channel"]))
+
+    assert len(channel.deliveries) == 1
+    delivered = channel.deliveries[0]
     assert delivered.content == "echo:hello"
-    assert not hasattr(delivered, "artifacts")
+    assert delivered.artifacts is None
 
 
 def test_no_expansion_artifact_not_in_tencent_sse_or_minimal() -> None:

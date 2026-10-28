@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.application import RuntimeCoordinator
 from app.application.access_authorization import AccessAuthorizationExecutor
 from app.application.agent_dispatch import AgentDispatchExecutor
-from app.application.delivery import DeliveryExecutor
+from app.application.delivery import DeliveryExecutor, build_outbound_response
 from app.application.errors import (
     AccessAuthorizationDeniedError,
     AgentDispatchFailedError,
@@ -179,8 +179,11 @@ def test_happy_path_reuse_existing_session(db_engine) -> None:
     channel_adapter = _TestChannelAdapter()
     before = _count(db_engine)
 
-    _real_coordinator(db_engine, agent_adapter, channel_adapter).execute(
-        _inbound(g["channel"]))
+    coordinator = _real_coordinator(db_engine, agent_adapter, channel_adapter)
+    inbound = _inbound(g["channel"])
+    result = coordinator.execute(inbound)
+    # P1 / C1：投递是显式的第 7 段（应用层在结果落库后发起）。
+    coordinator.deliver(build_outbound_response(inbound, result.agent_response))
 
     assert _count(db_engine) == before  # REUSE 分支不创建新 session
     request = agent_adapter.requests[-1]
@@ -198,8 +201,11 @@ def test_happy_path_create_new_session(db_engine) -> None:
     channel_adapter = _TestChannelAdapter()
     before = _count(db_engine)
 
-    _real_coordinator(db_engine, agent_adapter, channel_adapter).execute(
-        _inbound(g["channel"]))
+    coordinator = _real_coordinator(db_engine, agent_adapter, channel_adapter)
+    inbound = _inbound(g["channel"])
+    result = coordinator.execute(inbound)
+    # P1 / C1：投递是显式的第 7 段（应用层在结果落库后发起）。
+    coordinator.deliver(build_outbound_response(inbound, result.agent_response))
 
     assert _count(db_engine) == before + 1  # CREATE_NEW 物化一条
     cp_session_id = agent_adapter.requests[-1].control_plane_session_id
@@ -324,7 +330,17 @@ class _StageAdapter:
 
 def test_call_order_create_new() -> None:
     fakes = _Fakes(session_mode=CREATE_NEW)
-    fakes.coordinator().execute(_inbound(7))
+    coordinator = fakes.coordinator()
+    inbound = _inbound(7)
+
+    result = coordinator.execute(inbound)
+    # **P1 / C1**：execute() 只到 Dispatch（六段）——Delivery 是**显式**的第 7 段
+    # （由应用层在「Agent 成功结果已落库」之后发起）。
+    assert fakes.calls == ["identity", "authorization", "routing", "session",
+                           "session_creation", "dispatch"]
+
+    coordinator.deliver(build_outbound_response(inbound, result.agent_response))
+    # 段序未变：delivery 仍然**最后**。
     assert fakes.calls == ["identity", "authorization", "routing", "session",
                            "session_creation", "dispatch", "delivery"]
     assert fakes.last_cp_session_id == 300
@@ -332,7 +348,14 @@ def test_call_order_create_new() -> None:
 
 def test_call_order_reuse_active() -> None:
     fakes = _Fakes(session_mode=REUSE_ACTIVE, existing_session_id=100)
-    fakes.coordinator().execute(_inbound(7))
+    coordinator = fakes.coordinator()
+    inbound = _inbound(7)
+
+    result = coordinator.execute(inbound)
+    assert fakes.calls == ["identity", "authorization", "routing", "session",
+                           "dispatch"]
+
+    coordinator.deliver(build_outbound_response(inbound, result.agent_response))
     assert fakes.calls == ["identity", "authorization", "routing", "session",
                            "dispatch", "delivery"]
     assert fakes.last_cp_session_id == 100
@@ -399,9 +422,14 @@ def test_dispatch_failure_means_no_delivery() -> None:
 def test_delivery_failure_after_dispatch_success() -> None:
     fakes = _Fakes(session_mode=REUSE_ACTIVE, existing_session_id=100,
                    delivery_fail=ChannelDeliveryFailedError(7, "X"))
+    coordinator = fakes.coordinator()
+    inbound = _inbound(7)
+
+    result = coordinator.execute(inbound)
+    # Dispatch 已成功（请求已发给 agent）；**投递**是显式的第 7 段，故失败发生在
+    # 那一步（P1 / C1：由应用层在结果落库之后发起）。
     with pytest.raises(ChannelDeliveryFailedError):
-        fakes.coordinator().execute(_inbound(7))
-    # Dispatch 已成功（请求已发给 agent），Delivery 才失败
+        coordinator.deliver(build_outbound_response(inbound, result.agent_response))
     assert fakes.calls == ["identity", "authorization", "routing", "session",
                            "dispatch", "delivery"]
     assert fakes.last_cp_session_id == 100
@@ -413,9 +441,13 @@ def test_real_delivery_failure_after_dispatch_success(db_engine) -> None:
     """真实执行器 + 失败 Channel Adapter：Dispatch 成功后 Delivery 抛错。"""
     g = _seed(db_engine)
     agent_adapter = _TestAgentAdapter()
+    coordinator = _real_coordinator(
+        db_engine, agent_adapter, _FailingChannelAdapter())
+    inbound = _inbound(g["channel"])
+
+    result = coordinator.execute(inbound)
     with pytest.raises(ChannelDeliveryFailedError):
-        _real_coordinator(db_engine, agent_adapter, _FailingChannelAdapter()).execute(
-            _inbound(g["channel"]))
+        coordinator.deliver(build_outbound_response(inbound, result.agent_response))
     assert agent_adapter.requests, "Dispatch 已成功（才进入 Delivery）"
 
 

@@ -63,6 +63,7 @@ from app.persistence.models.identity import IdentityModel
 from app.persistence.models.interaction import InteractionModel
 from app.persistence.models.session import SessionModel
 from app.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.delivery_lifecycle_helper import DeliveringCoordinator
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 COORDINATOR_PY = APP_DIR / "application" / "coordinator.py"
@@ -130,7 +131,7 @@ def _seed(db_engine, *, conversation: str = "conv-1", bound: bool = True,
 
 def _coordinator(db_engine, agent_adapter, channel_adapter) -> RuntimeCoordinator:
     uow = _uow_factory(db_engine)
-    return RuntimeCoordinator(
+    return DeliveringCoordinator(RuntimeCoordinator(
         identity_resolution=IdentityResolutionExecutor(uow),
         access_authorization=AccessAuthorizationExecutor(uow),
         routing=RoutingExecutor(uow),
@@ -139,7 +140,7 @@ def _coordinator(db_engine, agent_adapter, channel_adapter) -> RuntimeCoordinato
         agent_dispatch=AgentDispatchExecutor(agent_adapter=agent_adapter,
                                              uow_factory=uow),
         delivery=DeliveryExecutor(channel_adapter=channel_adapter),
-    )
+    ))
 
 
 def _inbound(channel_id: int, conversation: str = "conv-1") -> InboundInteraction:

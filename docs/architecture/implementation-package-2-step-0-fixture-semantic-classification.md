@@ -1,5 +1,7 @@
 # Package 2 Implementation Step 0 — Fixture Semantic Classification Report
 
+> **OSS 发布说明**：本文为审计说明；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**，相关引用仅用于说明被设计的前端面（见 README「Project status」）。
+
 > 状态：**只读审计**。**Step 0 不修改任何文件**（未改生产代码、未改测试、未建 migration、未改守卫）。
 > 性质：把 Package 2-C D-6 的**启发式 inventory** 转为**逐文件语义判定**。
 > 方法：只读子代理逐文件读源码（85 次工具调用）+ 本人独立 grep 复核 + 3 处抽查纠偏。

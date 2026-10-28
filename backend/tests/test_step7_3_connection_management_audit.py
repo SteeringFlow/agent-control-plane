@@ -601,7 +601,7 @@ def test_k_reverse_audit_clean() -> None:
                          "agents", "bootstrap", "bootstrap_arms",
                          "browser_auth", "channel_inbound",
                          "channels", "connection_conversations", "connections",
-                         "coordinator", "delivery",
+                         "coordinator", "delivery", "delivery_recovery",
                          "driver", "errors", "identities", "identity_resolution",
                          "interaction_observability", "interaction_recording",
                          "routing", "runtime", "session_creation",

@@ -236,8 +236,11 @@ def test_e_no_new_component_classes() -> None:
     """不产生 Resolver/Router/Dispatcher/DeliveryService 类（也不藏方法名里）。"""
     src = RUNTIME_PY.read_text(encoding="utf-8")
     assert not _boundary_problems(src)
-    # Coordinator 只暴露 execute——是 Coordinator，不是各阶段 Service
-    assert _method_names(src) == {"execute"}, _method_names(src)
+    # Coordinator 只暴露 execute + deliver——是 Coordinator，不是各阶段 Service。
+    # **P1 / C1**：外部投递从 execute() 的同步链里移出后，第 7 段变成**显式**的
+    # `deliver(outbound)`（由应用层在「Agent 成功结果已落库之后」发起）。
+    # 边界仍然只有**两个**方法，且都不引入任何新组件类。
+    assert _method_names(src) == {"execute", "deliver"}, _method_names(src)
 
 
 # ================================================================== G mutation 探测

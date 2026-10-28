@@ -80,6 +80,10 @@ from app.application.interaction_recording import PersistingCoordinator
 from app.application.routing import RoutingExecutor
 from app.application.session_creation import SessionCreationExecutor
 from app.application.session_resolution import SessionResolutionExecutor
+from app.application.delivery_recovery import (
+    DeliveryRecoveryConfig,
+    DeliveryRecoveryDriver,
+)
 from app.application.tenant_fanout import TenantFanoutDriver, TenantComposition
 from app.application.tenant_provisioning import TenantProvisioningService
 from app.application.users import UserApplicationService
@@ -116,7 +120,11 @@ def _build_tenant_runtime(
     wecom_adapter = WeComAdapter(uow_factory=runtime_uow_factory)
     # 3B-2.2：WeCom 智能机器人 WebSocket transport（与 webhook 并列的第二形态）。
     # 连接是**进程级物理资源**（不属于租户），故 registry 由组合根持有并跨租户共享。
-    wecom_bot_adapter = WeComBotAdapter(registry=bot_registry)
+    wecom_bot_adapter = WeComBotAdapter(
+        registry=bot_registry,
+        # P0：ACK 等待窗口配置化（默认 10.0s = 既有硬编码常量，零行为变化）。
+        ack_wait_timeout_s=settings.WECOM_BOT_ACK_WAIT_TIMEOUT_SECONDS,
+    )
     channel_adapter = MultiChannelAdapter(
         {
             "wecom": wecom_adapter,
@@ -162,9 +170,24 @@ def _build_tenant_runtime(
             backoff_interval_seconds=settings.DRIVER_BACKOFF_INTERVAL_SECONDS,
         ),
     )
+    # P2：per-tenant 投递恢复驱动（**默认不启动**——组合根按 RECOVERY_ENABLED 决定）。
+    # source/executor 都是同一个 PersistingCoordinator：候选发现与租约回收走它的
+    # 只读/回收 phase，单条恢复走它的原子 claim ⇒ 与正常投递**共用**同一闸门。
+    recovery_driver = DeliveryRecoveryDriver(
+        source=phases,
+        executor=phases,
+        config=DeliveryRecoveryConfig(
+            poll_interval_seconds=settings.RECOVERY_POLL_INTERVAL_SECONDS,
+            pickup_limit=settings.RECOVERY_PICKUP_LIMIT,
+            reclaim_every=settings.RECOVERY_RECLAIM_EVERY,
+            lease_seconds=settings.RECOVERY_LEASE_SECONDS,
+            max_attempts=settings.RECOVERY_MAX_ATTEMPTS,
+        ),
+    )
     return TenantComposition(
         tenant_id=tenant_id, worker=worker, driver=driver,
-        phases=phases, channel_adapter=channel_adapter)
+        phases=phases, channel_adapter=channel_adapter,
+        recovery_driver=recovery_driver)
 
 
 def create_app() -> FastAPI:
@@ -227,6 +250,9 @@ def create_app() -> FastAPI:
         init_database()
         if tenant_fanout is not None:
             tenant_fanout.start()
+        # P2：投递恢复 ticker（默认 None ⇒ 不启动；启用需先完成 runbook 步骤）。
+        if recovery_fanout is not None:
+            recovery_fanout.start()
         # 3B-2.2：WS 长连接在 schema 初始化之后启动——它要枚举 wecom_bot 渠道，
         # 且 `init_database()` 之前表可能尚不存在（全新环境 SQLite）。
         if bot_transport is not None:
@@ -238,6 +264,9 @@ def create_app() -> FastAPI:
                 bot_transport.stop()
             if tenant_fanout is not None:
                 tenant_fanout.stop()
+            # P2：投递恢复 ticker 的停止（与执行 fan-out 对称）。
+            if recovery_fanout is not None:
+                recovery_fanout.stop()
 
     app = FastAPI(
         title=settings.APP_NAME,
@@ -450,6 +479,16 @@ def create_app() -> FastAPI:
         tenant_source=discover_tenant_scopes,
         driver_factory=lambda scope: _runtime_for(scope.tenant_id).driver,
     )
+    # P2：投递恢复的 per-tenant fan-out（**复用 TenantFanoutDriver 的生命周期
+    # 机制**，独立的 ticker 与职责）。**默认不启用**（RECOVERY_ENABLED=False）——
+    # 启用需先完成 runbook：迁移 → 部署 → 排空旧 Worker → 回填 → 核验。
+    recovery_fanout: TenantFanoutDriver | None = None
+    if settings.RECOVERY_ENABLED:
+        recovery_fanout = TenantFanoutDriver(
+            tenant_source=discover_tenant_scopes,
+            driver_factory=lambda scope: _runtime_for(
+                scope.tenant_id).recovery_driver,
+        )
 
     def _worker_for(scope: TenantScope) -> Worker:
         """已认证 TenantScope → 该租户的 Worker（scope 取自 0.1.3.1 验签后解析）。"""

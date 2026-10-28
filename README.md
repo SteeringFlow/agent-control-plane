@@ -100,6 +100,26 @@ erode. Key building blocks:
 - Real agent adapter: Tencent ACP (minimal HTTP binding and SSE binding)
 - Async execution boundary: HTTP `202/200 accepted` ≠ execution; a background
   worker claims and runs interactions
+- Delivery lifecycle separation: the runtime pipeline covers the six inbound
+  stages; external delivery is an explicit seventh stage, started **after** the
+  agent result has been persisted (a delivery failure never rolls back or
+  re-judges the persisted result)
+- Delivery observability: the WeCom bot ACK wait window (frame sent → channel
+  `errcode` receipt) is configurable (`WECOM_BOT_ACK_WAIT_TIMEOUT_SECONDS`),
+  and delivery failures carry an `outcome_known` axis — `False` means "the
+  frame was written but no receipt arrived" (outcome **unknown**, not
+  "not delivered")
+- Guard-failure delivery protection: a fail-closed earlier stage delivers
+  nothing — a failed interaction cannot emit a stale message
+- Optional delivery recovery — **disabled by default**: a recovery driver can
+  re-attempt delivery for failures that are *provably* undelivered, using an
+  atomic claim, an attempt fence and a lease, plus a tenant-scoped idempotent
+  backfill for legacy rows. It is off (`RECOVERY_ENABLED=false`) unless an
+  operator explicitly enables it and follows the recovery runbook; end-to-end
+  exactly-once is **not** provided
+- Artifact *references* in outbound delivery: agent responses may carry
+  references (never bytes — the control plane does not fetch, store or proxy
+  them), rendered into outbound channel messages under an explicit URI policy
 - Docker Compose deployment assets (SQLite OSS profile, PostgreSQL cloud
   profile, production topology behind nginx)
 
@@ -111,9 +131,13 @@ erode. Key building blocks:
   require an `AgentAdapter` implementation (see `examples/custom-agent`)
 - One channel maps to **one active Connection/Agent** (multi-agent-per-channel
   routing is a recorded capability gap, fail-closed if violated)
-- Delivery retries, message-id deduplication policies, and delivery-failure
-  replay are **not implemented** (carriers and semantics are designed but
-  intentionally deferred)
+- The normal delivery path does **not** auto-retry, and message-id
+  deduplication policies are **not implemented** (carriers and semantics are
+  designed but intentionally deferred)
+- Delivery-failure *replay* exists only as the **optional** recovery mechanism
+  described above: it is off by default, it re-attempts only failures that are
+  provably undelivered, it does not provide end-to-end exactly-once, and it has
+  **not** been validated against a production database
 - The development history and design ledgers are mostly written in Chinese;
   the English README is the primary international entry point, and deeper
   `docs/` remain Chinese for now
@@ -122,7 +146,10 @@ erode. Key building blocks:
 
 ## Prerequisites
 
-- Python 3.14 (the version tested by CI and used by the Docker images; other versions are untested)
+- Python 3.14 (the version tested by CI and used by the Docker images). The local
+  Quick Start flow has also been run end-to-end on Windows with Python 3.12.13;
+  that is a spot check of that one path, not full Python 3.12 support across
+  all integrations or environments.
 - pip
 - Docker + Docker Compose (optional — for the container path)
 - No external services required for the quick start (SQLite + local channel +
@@ -131,7 +158,7 @@ erode. Key building blocks:
 ## Installation
 
 ```bash
-git clone <repository-url> agent-control-plane
+git clone https://github.com/SteeringFlow/agent-control-plane.git agent-control-plane
 cd agent-control-plane/backend
 pip install -r requirements.txt
 ```
@@ -151,6 +178,14 @@ This walkthrough exercises the complete control-plane loop — User → Agent �
 Channel → Identity → Connection → conversation grant → message → observable
 response — without Tencent ACP, WeCom, or a public HTTPS endpoint. The database
 is created automatically on first boot; no migration needed.
+
+**Run it once, against a fresh database.** This walkthrough is written for an
+empty database and is meant to be executed once, in order. Repeating the
+resource-creation steps (2-6) against a database where those resources already
+exist returns `HTTP 409` (already exists) rather than silently creating
+duplicates. To start over, point `DATABASE_URL` at a new, empty database file
+(from `backend/`, for example `DATABASE_URL=sqlite:///./data/agent_control_plane_fresh.db`)
+instead of deleting or resetting a database that holds data you want to keep.
 
 Start the API (from `backend/`):
 
@@ -331,7 +366,8 @@ agent-control-plane/
 ## Project status
 
 SteeringFlow is developed in small, audited increments ("steps"); the current
-line is the `v0.1.0-rc.x` release-candidate series. Recent milestones:
+line is the `v0.1.0-rc.x` release-candidate series. The current candidate is
+`0.1.0-rc.11` — **not tagged and not published yet**. Recent milestones:
 
 | Milestone | Status |
 |---|---|
@@ -343,7 +379,10 @@ line is the `v0.1.0-rc.x` release-candidate series. Recent milestones:
 | Async worker execution (ACK ≠ execution), multi-agent isolation | ✅ |
 | Local first-success loop (zero external dependencies) | ✅ |
 | Deployment boundary (nginx/compose, credential fail-closed injection) | ✅ |
-| Release hardening, docs, snapshot publication | 🚧 in progress (`rc.9`) |
+| Delivery lifecycle separation + delivery observability + guard-failure delivery protection | ✅ (rc.11 candidate) |
+| Optional delivery recovery (atomic claim, attempt fence, backfill) — **off by default**, not production-validated | 🚧 rc.11 candidate (opt-in, operator runbook) |
+| Artifact references in outbound delivery (URI policy, no byte transfer) | ✅ (rc.11 candidate) |
+| Release hardening, docs, snapshot publication | 🚧 in progress (`rc.11` candidate — not tagged, not published; the public `v0.1.0-rc.10` prerelease on GitHub was published from an earlier snapshot and does not contain this candidate) |
 
 Design/decision details for every milestone are recorded under `docs/`.
 

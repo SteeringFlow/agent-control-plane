@@ -557,7 +557,7 @@ tenant 在 **Repository 实现 / UoW Scope 层**解决，**不得**把 `get_agen
 | `tests/test_step10_6_1` | connection 唯一约束 | 改 `uq_connections_tenant_channel_agent_id` + 含 `tenant_id`。 |
 | `tests/test_step10_6_2` | session 唯一约束（原断言 `len==?`） | 断言新 `uq_sessions_tenant_identity_conn_conv`。 |
 | `tests/test_step11_1` | agents ORM 无 `UniqueConstraint` | 保持不变（agents 仍无业务唯一约束；`tenant_id` 只加列）。 |
-| `tests/test_acp_v0_2_artifact_implementation.py` | `metadata.tables` 键集 | 随 9 表更新（如断言全集）。 |
+| `tests/test_acp_v0_2_artifact_implementation.py` | `metadata.tables` 键集 | ✅ **已核销：无需更新**（Phase 0 文档对账，2026-10-26）。原预判「随 9 表更新（如断言全集）」**前提不成立**——该断言并非写死表全集，而是**表名负向谓词**：`assert not any("artifact" in t for t in table_names)`（`tests/test_acp_v0_2_artifact_implementation.py:299-300`，函数 `test_no_expansion_artifact_not_in_db_schema`），**对表数量 / 表集合演进天然免疫**。<br>实证：租户隔离落地后表集合已由 9 表演进至 **13 表**（当前 `Base.metadata.tables` 实测：`activities, agents, bootstrap_arms, browser_sessions, channels, connection_conversations, connections, identities, interactions, sessions, tenants, user_credentials, users`），该断言**至今保持绿**且无需任何改动。<br>因此本行**保留原行**（不删除待办痕迹）并在此标注核销结论与证据。 |
 | 其余引用 `create_all` / `CORE_TABLES` 的测试 | 多为建表辅助，非 schema 断言 | 多数无需改；逐一 `pytest` 验证。 |
 
 > 目标：**除上表 schema 基线锁外，其余测试（约 100+）零改动通过**（靠 §2.1 的 `default=1` + Tenant#1 种子实现）。

@@ -96,10 +96,15 @@ class Worker:
                 interaction_id, inbound, exc,
                 expected_started_at=expected_started_at)
             raise
-        self._phases.record_success(
-            interaction_id, result, expected_started_at=expected_started_at)
+        # P1 / C1：Agent 执行 → **结果落库** → 外部投递 → 投递结果落定。
+        # 编排由 `PersistingCoordinator.record_agent_success_and_deliver` 统一
+        # 实现（与同步路径同一份代码），它保证「Agent 成功结果先落库、投递在其后」；
+        # 投递失败**不回滚**结果、**不**把 processing 改判为失败（异常照旧上抛）。
+        self._phases.record_agent_success_and_deliver(
+            self._runtime, inbound, result,
+            interaction_id=interaction_id,
+            expected_started_at=expected_started_at)
         return True
-
     def _load(self, interaction_id: int):
         """读回 interaction 记录——只为拿到 request_payload 快照（纯读）。"""
         with self._uow_factory() as uow:

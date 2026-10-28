@@ -7,18 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Changes on `master` after the `0.1.0-rc.10` candidate cut. Not yet part of
-> any release candidate; the next candidate is planned as `v0.1.0-rc.11`
-> (not yet tagged).
+> Changes on `master` after the `0.1.0-rc.10` candidate cut (internal tag
+> `v0.1.0-rc.10`). They form the **next candidate, `0.1.0-rc.11`**, which is
+> **not tagged and not published**. The public `v0.1.0-rc.10` prerelease on
+> GitHub was published from a different, earlier snapshot; it must not be
+> reused or overwritten for this candidate.
 
-## [0.1.0-rc.10] - TBD
+### Changed
 
-> Next release candidate prepared on `master` (not yet tagged). Bundles the
-> changes accumulated on the private source line since the `v0.1.0-rc.8` tag
-> and the audited OSS export-boundary governance work (M8 series). The public
-> OSS tree for this candidate is produced by the audited clean-export
-> procedure (denylist + process-level exclusions); the `_deploy/` public set
-> and the 568-file export boundary are unchanged.
+- **Version identity**: `VERSION` now reads `0.1.0-rc.11` — a candidate
+  version only (no tag, no public release).
+- **UI test contracts aligned with the current product behaviour**: the
+  diagnosis-mapping invariant now separates the *shared* stages from the
+  page-specific `identity_resolution` / `authorization` stages, the
+  "add channel" flow is exercised through the real create entry point (the
+  "edit channel" entry is explicitly not a create path), and the management
+  panel titles assert the actual object name. **No product behaviour was
+  changed.**
+- **Export-tree guards**: an exported backend test must not open `frontend/`
+  files at import time, and every exported test that reads `frontend/` at
+  runtime must be detected by the AST analyser — so it is *skipped* rather
+  than erroring inside a public export tree.
+- **OSS candidate documentation aligned** with the candidate contents: README
+  capabilities/limitations and project status, the public GitHub clone URL,
+  and the release-state wording in this changelog.
+- **Legacy local repository absolute paths removed** from the published
+  architecture baseline-evidence document.
+
+### Fixed
+
+- **Public documentation no longer presents the excluded `frontend/` sources as
+  part of the current OSS distribution**: every published document that
+  references the web-UI sources now states explicitly that they are not part of
+  the current OSS release content.
+
+## [0.1.0-rc.10] - 2026-10-28
+
+> Release candidate cut on `master` (internal tag `v0.1.0-rc.10`). Bundles the
+> changes accumulated on the private source line since the `v0.1.0-rc.8` tag,
+> the audited OSS export-boundary governance work (M8 series), and the
+> delivery-lifecycle / delivery-recovery / artifact-reference work listed
+> below. The public OSS tree for this candidate is produced by the audited
+> clean-export procedure (denylist + process-level exclusions): the `_deploy/`
+> public set is unchanged, and the export boundary now covers **584 files**
+> (568 before this candidate's implementation commits).
+>
+> Publication status: the public `v0.1.0-rc.10` prerelease on GitHub was
+> published on 2026-10-18 from a **pre-candidate** snapshot (568 files, before
+> the changes listed below); this candidate's OSS tree has **not** been
+> published yet, and the two snapshots share a version label.
 
 ### Added
 
@@ -40,6 +77,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authorization-gated cutover / rollback procedure with clean-build-context and
   image-identity discipline (`a251e94`).
 - **Early-access feedback contact entry** in the web UI (`e86c4ce`).
+- **Delivery lifecycle separation (P1/C1)**: the runtime pipeline now covers
+  the six inbound stages only; external delivery became an explicit seventh
+  stage, started by the application layer **after** the agent result has been
+  persisted (`record_agent_success_and_deliver`). A delivery failure no longer
+  rolls back or re-judges the persisted agent result.
+- **Delivery observability (P0)**: the WeCom bot ACK wait window (frame sent →
+  channel `errcode` receipt) is configurable
+  (`WECOM_BOT_ACK_WAIT_TIMEOUT_SECONDS`, default `10.0` s — the previous
+  hard-coded value). Delivery failures now carry an orthogonal `outcome_known`
+  axis: `False` means "the frame was written but no receipt arrived", i.e. the
+  outcome is **unknown** — not "not delivered" and not "safe to retry".
+- **Guard-failure delivery protection (P1.1/M1)**: when an earlier stage fails
+  closed, nothing is delivered — a failed interaction can no longer emit a
+  stale message.
+- **Delivery recovery — optional and disabled by default (P2)**: an optional
+  recovery driver can re-attempt delivery for failures that are *provably*
+  undelivered (`delivery_protocol=1` ∧ `retryable` ∧ attempt budget), using an
+  atomic claim, an attempt fence and a lease, plus a tenant-scoped, idempotent
+  one-off backfill for legacy rows. It is **off by default**
+  (`RECOVERY_ENABLED=false`) and requires an operator runbook
+  (`docs/step-p2-delivery-recovery-implementation.md`); end-to-end
+  exactly-once is **not** provided, and the recovery path has not been
+  validated against a production database.
+- **Artifact references in outbound delivery (ACP V0.3 / V0.4)**: agent
+  responses may carry artifact *references* — never bytes; the control plane
+  does not fetch, store or proxy them — and those references are rendered into
+  outbound channel messages under an explicit URI policy.
+
+### Changed
+
+- **Export-boundary guards extended**: exported backend tests must not open
+  `frontend/` files at import time, and every exported test that reads
+  `frontend/` at runtime must be detected by the AST analyser, so that it is
+  skipped (rather than erroring) inside a public export tree.
 
 ### Fixed
 

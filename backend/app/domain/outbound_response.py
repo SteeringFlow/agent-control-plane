@@ -18,7 +18,12 @@
     - `external_conversation_id`：Channel-side conversation（回给谁）；
     - `content`：要发送的文本；
     - `metadata`：可选结构化扩展（与 InboundInteraction.metadata 同纪律——不承载
-      凭据 / 策略 / 路由信息）。
+      凭据 / 策略 / 路由信息）；
+    - `artifacts`：**ACP V0.3 Phase 1 加性字段**——Agent 产出的工作成果**引用**
+      （`list[app.domain.artifact.Artifact]`）。它是**引用**，不是字节：Control Plane
+      **不取回、不存储、不代理**其指向的资源（契约见
+      `docs/step-acp-v0.3-artifact-outbound-implementation-gate.md` §6.4）。
+      默认 `None` ⇒ 旧调用方与旧出站消息**逐字节不变**。
 
 **不携带**（Delivery 不需要知道这些）：
     user_id / identity_id / session_id / connection_id / agent_id / routing_rule
@@ -64,10 +69,16 @@ class OutboundResponse:
     - `channel_id`：目标 Channel.id（已被 Routing/Connection 确定，Delivery 只消费）；
     - `external_conversation_id`：Channel-side conversation（回给谁）；
     - `content`：要发送的文本；
-    - `metadata`：可选结构化扩展。
+    - `metadata`：可选结构化扩展；
+    - `artifacts`：可选的 Agent 产出的**成果引用**列表（默认 None）。
+
+    ACP V0.3 Phase 1：本模块**刻意不 import** `app.domain.artifact`——元素类型在
+    上文 docstring 声明为 `list[Artifact]`，以维持 8.6「本模块仅 stdlib」的
+    导入纪律（只依赖 dataclasses）。
     """
 
     channel_id: int
     external_conversation_id: str
     content: str
     metadata: dict | None = None
+    artifacts: list | None = None

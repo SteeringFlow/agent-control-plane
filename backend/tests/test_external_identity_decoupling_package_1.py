@@ -175,7 +175,10 @@ def test_p1_2_migration_chain_is_linear_and_head_is_current() -> None:
     referenced = {d for d in graph.values() if d is not None}
     assert len(referenced) == len(graph) - 1, f"迁移链分叉或断链：{graph}"
     heads = set(graph) - referenced
-    assert heads == {"0008"}, f"head 应为 0008，实际 {heads}"
+    # P2 Delivery Recovery：0009（delivery_recovery 三列）成为新 head；
+    # 链仍单根、线性。
+    assert graph.get("0009") == "0008", f"0009 必须 revises 0008：{graph}"
+    assert heads == {"0009"}, f"head 应为 0009，实际 {heads}"
 
 
 def test_p1_3_orm_user_id_is_nullable_with_fk_intact() -> None:

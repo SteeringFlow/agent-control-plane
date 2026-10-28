@@ -1,5 +1,7 @@
 # Step 13.3 — Interaction Operations View Implementation Audit
 
+> **OSS 发布说明**：本文为历史审计记录；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 > **审计步，生产代码改动：0 行。**
 > 交付物 = 本报告（实现前边界审计），喂给 Step 13.4（Minimal Observation UI）。
 >

@@ -163,7 +163,8 @@ def test_frozen_contract_field_faces_unchanged() -> None:
     assert {f.name for f in dataclasses.fields(AgentResponse)} == {
         "content", "external_session_id", "metadata", "artifacts"}
     assert {f.name for f in dataclasses.fields(OutboundResponse)} == {
-        "channel_id", "external_conversation_id", "content", "metadata"}
+        "channel_id", "external_conversation_id", "content", "metadata",
+        "artifacts"}
 
 
 # ================================================================== 3. Coordinator 纯编排

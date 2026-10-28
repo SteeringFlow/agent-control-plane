@@ -1,5 +1,7 @@
 # Step Cloud-0.1.2.1 —— Registration → Workspace Entry
 
+> **OSS 发布说明**：本文为历史实现记录；文中引用的 `frontend/`（Web UI 源码）**不包含在当前 OSS 发行内容中**（见 README「Project status」）。
+
 技术基线：Cloud-0.1.2（Workspace & Golden Path Architecture Gate，GO）→ **本步（最小实现）**。
 
 一句话目标：**让 Cloud 用户「注册即拥有自己的 Workspace」**——一次 Sign Up 完成

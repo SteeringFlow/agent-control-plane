@@ -18,16 +18,24 @@
   `processing_status` 单一事实源纪律一致，**不新建 Enum**）；不穷举，未知 kind
   由消费侧按 file-like 默认处理，不抛错；
 - `name`：人类可读名，必填；
-- `uri`：可解析位置，可为 None（延迟交付 / 纯引用——V0.2 **不解析、不投递、不存储**）；
-- `mime_type` / `size_bytes`：可选描述性元数据；
+- `uri`：可解析位置，可为 None（延迟交付 / 纯引用）。**ACP 从不解析、不取回**它——
+  V0.4 Phase 2 只做**结构与协议策略判定**（是否允许作为引用呈现），
+  见 docs/step-acp-v0.4-artifact-uri-policy.md；
+- `mime_type` / `size_bytes`：可选描述性元数据（**Agent 声明值**，ACP **未**验证）；
 - `metadata`：protocol-neutral auxiliary（同 `AgentResponse.metadata` 边界）。
 
 边界（V0.2 刻意不做，见 docs/step-acp-v0.2-artifact-contract-gate.md §7/§8）：
-- **不投递**：Artifact 不进 Delivery / ChannelAdapter / OutboundResponse；
 - **不流式**：Artifact 不进 Tencent SSE / minimal wire；
 - **不存储**：无 artifact 表 / 列 / blob store / DB schema 变更；
 - **不进 RuntimeExecutionResult**：Result 字段面恒三字段，Artifact 仅经
   `AgentResponse.artifacts` 顺带携带（不改变执行语义）。
+
+**已交付的出站引用能力（ACP V0.3 Phase 1 / V0.4 Phase 2）**：
+- Artifact **引用**可进 Delivery / ChannelAdapter / OutboundResponse，并在出站消息中
+  **安全呈现**（见 docs/step-acp-v0.3-artifact-outbound-implementation-gate.md）；
+- 呈现层**只判结构与协议**，**不取回字节、不代理、不缓存、不存储**，
+  **不做可达性探测**，**不提供任何文件级访问授权**——
+  「可呈现」≠「可访问」≠「可信」≠「已授权」。
 """
 
 from dataclasses import dataclass

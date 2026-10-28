@@ -55,6 +55,9 @@ class TenantComposition:
     driver: ProductionDriver
     phases: object           # PersistingCoordinator（legacy intake 依赖 / 诊断用）
     channel_adapter: object  # MultiChannelAdapter（入站 Adapter 消费点）
+    # P2：投递恢复驱动（per-tenant，**默认不启动**——由组合根按配置决定）。
+    # 缺省 None ⇒ 行为与 P2 之前逐字节一致（不启动任何恢复 ticker）。
+    recovery_driver: object | None = None
 
 
 class TenantFanoutDriver:

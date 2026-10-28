@@ -103,6 +103,20 @@ fire-and-forget**：`deliver()` 发帧后等待该 req_id 的响应并校验 err
 11s 才回来 = delivery failure。`DEFAULT_ACK_WAIT_TIMEOUT_S` **不是**「Agent
 最多只能跑 10s」——这是本模块最容易被误读的一点，故在常量定义处再次标注。
 
+**P0 可观测性（纯观测；不改变任何投递语义、不引入重投）**：本模块此前**零投递
+日志**（ACK 路径完全不可见），导致线上「Agent 已答、用户没收到」只能靠推断。
+现补齐五类事件（统一字段：`channel_id` / `req_id` / `attempt` / 等待耗时）：
+
+    delivery attempt              发帧前（frame_bytes、ack_wait_s）
+    delivery ack ok               收到 errcode == 0（waited_ms）
+    delivery rejected by channel  收到 errcode != 0（errcode/errmsg）
+    delivery ack timeout          ACK 窗口内未等到回执（outcome_known=False）
+    delivery late ack observed    超时之后才到达的同一 req_id 回执（仅证据）
+
+⚠️ 语义红线：**ACK 超时 = 结果未知**（可能已送达、也可能没有）——
+既不得据此推断「未送达」，也不得把 `outcome_known=False` 当作「可以安全重试」
+的依据；迟到 ACK 只被**记录**，不判定送达、不改状态、不触发重投。
+
 **收发线程所有权（为什么 ACK 由 transport 线程兑现）**：`recv` 的所有权属于
 transport 线程（websockets 同步连接不允许两个线程同时 `recv`）。因此交付线程
 （Worker）只**发送**并在 registry 上登记等待槽，由 transport 线程收到响应帧时
@@ -154,6 +168,7 @@ Worker 重建 → `OutboundResponse.metadata` → 本模块回复帧），**Doma
 无 mention 判定、无 Core 改动；群聊主动推送仍不做。）
 """
 
+import itertools
 import json
 import logging
 import queue
@@ -164,6 +179,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.application.errors import ChannelDeliveryFailedError
+from app.domain.artifact_reference import render_outbound_content
 from app.domain.channel import Channel
 from app.domain.inbound_interaction import (
     CHAT_TYPE_METADATA_KEY,
@@ -228,6 +244,18 @@ DEFAULT_CONNECT_CLOSE_TIMEOUT_S = 5.0
 #: 11s 才回来 → 记 delivery failure。两个时间维度彼此独立，误读本常量为
 #: 「Agent 只能跑 10s」是本模块最容易发生的理解偏差。
 DEFAULT_ACK_WAIT_TIMEOUT_S = 10.0
+
+#: **迟到 ACK 观测窗口**（P0）：ACK 超时后，仍在此窗口内到达的同一 `req_id`
+#: 回执会被识别为「迟到 ACK」并留下可审计痕迹（仅观测）。
+#:
+#: ⚠️ 它的语义边界（不可越界）：
+#: - 迟到 ACK **只被记录**，**不**判定「已送达」、**不**改写任何状态、
+#:   **不**触发任何重投——ACK 超时意味着「结果未知」，超时后到达的回执只是
+#:   **证据**，不是结论；
+#: - 窗口长度是**观测保留期**，与 ACK 等待窗口（`DEFAULT_ACK_WAIT_TIMEOUT_S`）
+#:   和 Agent 执行时长**互不相关**；
+#: - 超出窗口的迟到 ACK 退化为「未匹配 ACK」（静默忽略，与既有语义一致）。
+DEFAULT_LATE_ACK_OBSERVATION_WINDOW_S = 300.0
 
 #: 运行期调和间隔（M6.6-F2）：重调 `binding_source()` 并做 ADD / KEEP / REMOVE。
 #:
@@ -481,10 +509,28 @@ class _AckSlot:
 
     交付线程 `open` → 发送 → `event.wait()`；transport 线程收到该 `req_id` 的
     响应帧时 `resolve`（写入 payload 并置位）。两者分属不同线程，故用 Event。
+
+    `registered_at`（P0）：槽登记时刻的 `time.monotonic()`——用于计算
+    「发帧→回执」的实际等待耗时（观测用，不参与任何语义判定）。
     """
 
     event: threading.Event
     payload: dict | None = None
+    registered_at: float = 0.0
+
+
+@dataclass
+class _LateAckObservation:
+    """一次 **ACK 超时之后** 才到达的回执的观察记录（P0 观测专用）。
+
+    ⚠️ 语义边界：它**只**用于留下痕迹（谁、何时、等了多久、回了什么）。
+    它**不**判定「已送达」、**不**改写投递状态、**不**触发重投——
+    ACK 超时意味着**结果未知**（可能已送达、也可能没有），迟到回执只是**证据**。
+    """
+
+    timed_out_at: float
+    waited_s: float
+    attempt: int | None = None
 
 
 class WeComBotConnectionRegistry:
@@ -510,6 +556,8 @@ class WeComBotConnectionRegistry:
         self._lock = threading.Lock()
         self._senders: dict[int, Callable[[str], None]] = {}
         self._acks: dict[tuple[int, str], _AckSlot] = {}
+        # P0 观测：ACK 超时之后才到达的回执记录（**只观测**，不参与任何判定）。
+        self._late_acks: dict[tuple[int, str], _LateAckObservation] = {}
 
     def register(self, channel_id: int, sender: Callable[[str], None]) -> None:
         with self._lock:
@@ -543,7 +591,7 @@ class WeComBotConnectionRegistry:
 
     def expect_ack(self, channel_id: int, req_id: str) -> _AckSlot:
         """登记「等待该 req_id 的交付结果」槽（交付线程调用，随后必须 close）。"""
-        slot = _AckSlot(event=threading.Event())
+        slot = _AckSlot(event=threading.Event(), registered_at=time.monotonic())
         with self._lock:
             self._acks[(channel_id, req_id)] = slot
         return slot
@@ -555,14 +603,60 @@ class WeComBotConnectionRegistry:
 
         返回 True = 命中某个在途交付；False = 该响应与本进程任何交付无关
         （如 ping 响应 / 订阅后遗留帧）→ 静默忽略，不当成交付结果。
+
+        **P0 观测（不改变既有语义）**：
+        - 命中在途槽 → 照旧兑现（返回 True）；
+        - 未命中但落在「迟到 ACK 观测窗口」内 → 记录**迟到 ACK**（WARNING 级
+          证据），仍返回 False（**不**判定送达、**不**改状态、**不**重投）；
+        - 其余未匹配 → DEBUG 级留痕后静默忽略（与既有行为一致）。
         """
         with self._lock:
             slot = self._acks.get((channel_id, req_id))
+            late = (None if slot is not None
+                    else self._late_acks.pop((channel_id, req_id), None))
         if slot is None:
+            errcode = payload.get("errcode") if isinstance(payload, dict) else None
+            errmsg = payload.get("errmsg") if isinstance(payload, dict) else None
+            if late is not None:
+                LOGGER.warning(
+                    "wecom bot late ack observed: channel_id=%s req_id=%s attempt=%s "
+                    "errcode=%s errmsg=%r waited_s=%.3f age_s=%.3f",
+                    channel_id, req_id, late.attempt, errcode, errmsg,
+                    late.waited_s, time.monotonic() - late.timed_out_at)
+            else:
+                LOGGER.debug(
+                    "wecom bot unmatched ack ignored: channel_id=%s req_id=%s errcode=%s",
+                    channel_id, req_id, errcode)
             return False
         slot.payload = payload
         slot.event.set()
         return True
+
+    def mark_ack_timeout(
+        self, channel_id: int, req_id: str, *, waited_s: float,
+        attempt: int | None = None,
+    ) -> None:
+        """登记「本次投递在 ACK 窗口内未等到回执」的事实（**仅观测**）。
+
+        用途只有一个：让**之后**到达的同一 `req_id` 回执能被识别为「迟到 ACK」
+        并留下痕迹。它**不**改变任何投递结论——ACK 超时意味着**结果未知**
+        （企微可能已送达、也可能没有），**不得**据此推断「未送达」，
+        更**不得**据此触发重投。
+        """
+        with self._lock:
+            self._prune_late_acks_locked()
+            self._late_acks[(channel_id, req_id)] = _LateAckObservation(
+                timed_out_at=time.monotonic(), waited_s=waited_s, attempt=attempt)
+
+    def _prune_late_acks_locked(self) -> None:
+        """丢弃超出观测窗口的迟到 ACK 记录（调用方须持锁）。"""
+        now = time.monotonic()
+        stale = [
+            key for key, item in self._late_acks.items()
+            if now - item.timed_out_at > DEFAULT_LATE_ACK_OBSERVATION_WINDOW_S
+        ]
+        for key in stale:
+            self._late_acks.pop(key, None)
 
     def forget_ack(self, channel_id: int, req_id: str) -> None:
         """移除等待槽（交付线程在 finally 中调用，避免槽泄漏）。"""
@@ -589,6 +683,9 @@ class WeComBotAdapter:
     ) -> None:
         self._registry = registry
         self._ack_wait_timeout_s = ack_wait_timeout_s
+        # P0 观测：进程内单调的**投递尝试号**（仅用于日志关联，不参与任何语义判定，
+        # 也不替代渠道侧的 `req_id` 关联键）。
+        self._attempt_seq = itertools.count(1)
 
     # ------------------------------------------------------------ 入站
 
@@ -665,19 +762,51 @@ class WeComBotAdapter:
         - 无活连接 / 发送失败 / ACK 超时（transport 类）→ True；
         - **ACK errcode != 0（应用层明确拒绝）→ False**：同一个 req_id 不会
           因为重试而变得有效（如已过期 / 已消费），重试无意义。
+
+        **P0 观测（不改变任何既有语义）**：
+        - 每次投递都带一个进程内单调的 **attempt 号**，与渠道侧关联键 `req_id`
+          一起写进日志：`delivery attempt` / `delivery ack ok` /
+          `delivery rejected by channel` / `delivery ack timeout` /
+          `delivery send failed` / `delivery not sent`（无活连接）/
+          `delivery rejected before send`（契约类）；
+        - **ACK 超时**额外登记「迟到 ACK 观测窗口」：之后到达的同一 `req_id`
+          回执会被记为**迟到 ACK**（WARNING 级证据），**仅记录**——不判定
+          「已送达」、不改写状态、不触发任何重投；
+        - ACK 超时抛出的错误带 `outcome_known=False`（**结果未知**）。该属性与
+          `retryable` **正交**：未知**不是**"可以安全重试"的依据
+          （重投可能造成重复投递）；本模块**不**自行重试（P0 无重投机制）。
         """
+        attempt = next(self._attempt_seq)
         if not isinstance(outbound, OutboundResponse):
+            LOGGER.warning(
+                "wecom bot delivery rejected before send: attempt=%s reason=%s",
+                attempt, "outbound_not_an_outbound_response")
             raise ChannelDeliveryFailedError()
         if not isinstance(outbound.channel_id, int) or outbound.channel_id <= 0:
+            LOGGER.warning(
+                "wecom bot delivery rejected before send: attempt=%s reason=%s",
+                attempt, "invalid_channel_id")
             raise ChannelDeliveryFailedError()
         if not isinstance(outbound.external_conversation_id, str) \
                 or not outbound.external_conversation_id.strip():
+            LOGGER.warning(
+                "wecom bot delivery rejected before send: channel_id=%s attempt=%s "
+                "reason=%s",
+                outbound.channel_id, attempt, "invalid_external_conversation_id")
             raise ChannelDeliveryFailedError(channel_id=outbound.channel_id)
         if not isinstance(outbound.content, str) or not outbound.content.strip():
+            LOGGER.warning(
+                "wecom bot delivery rejected before send: channel_id=%s attempt=%s "
+                "reason=%s",
+                outbound.channel_id, attempt, "empty_content")
             raise ChannelDeliveryFailedError(channel_id=outbound.channel_id)
 
         reply_context = reply_context_from(outbound)
         if reply_context is None:
+            LOGGER.warning(
+                "wecom bot delivery rejected before send: channel_id=%s attempt=%s "
+                "reason=%s outcome_known=%s",
+                outbound.channel_id, attempt, "missing_reply_handle", True)
             raise ChannelDeliveryFailedError(
                 channel_id=outbound.channel_id,
                 external_conversation_id=outbound.external_conversation_id,
@@ -686,6 +815,10 @@ class WeComBotAdapter:
 
         sender = self._registry.sender_for(outbound.channel_id)
         if sender is None:
+            LOGGER.warning(
+                "wecom bot delivery not sent: channel_id=%s attempt=%s reason=%s "
+                "outcome_known=%s",
+                outbound.channel_id, attempt, "no_live_connection", True)
             raise ChannelDeliveryFailedError(
                 channel_id=outbound.channel_id,
                 external_conversation_id=outbound.external_conversation_id,
@@ -694,42 +827,93 @@ class WeComBotAdapter:
 
         req_id = _as_text(reply_context.get(_HEADER_REQ_ID))
         if not req_id:      # 防御性：reply_context_from 已保证非空（理论不可达）
+            LOGGER.warning(
+                "wecom bot delivery rejected before send: channel_id=%s attempt=%s "
+                "reason=%s",
+                outbound.channel_id, attempt, "empty_req_id")
             raise ChannelDeliveryFailedError(
                 channel_id=outbound.channel_id,
                 external_conversation_id=outbound.external_conversation_id,
                 retryable=False,
             )
 
-        frame = compose_respond_frame(outbound.content, reply_context)
+        # ACP V0.3 Phase 1：Agent 产出的成果**引用** → 出站消息呈现（引用式：
+        # 只呈现引用，不取回字节、不上传、不声称已送达）。无 artifact 时
+        # `content` **原样**（逐字节一致）⇒ 旧出站帧零变化。
+        content = render_outbound_content(outbound.content, outbound.artifacts)
+        frame = compose_respond_frame(content, reply_context)
         slot = self._registry.expect_ack(outbound.channel_id, req_id)
+        sent_at = time.monotonic()
         try:
             try:
-                sender(json.dumps(frame, ensure_ascii=False))
+                # 序列化仍在 try 内：序列化失败与发送失败同样映射为
+                # CHANNEL_DELIVERY_FAILED（既有语义逐字不变）。
+                payload_bytes = json.dumps(frame, ensure_ascii=False)
+                LOGGER.info(
+                    "wecom bot delivery attempt: channel_id=%s req_id=%s attempt=%s "
+                    "frame_bytes=%d ack_wait_s=%.3f",
+                    outbound.channel_id, req_id, attempt, len(payload_bytes),
+                    self._ack_wait_timeout_s)
+                sent_at = time.monotonic()
+                sender(payload_bytes)
             except ChannelDeliveryFailedError:
                 raise
             except Exception as exc:  # noqa: BLE001  连接已断 / 序列化 / 发送失败
+                LOGGER.warning(
+                    "wecom bot delivery send failed: channel_id=%s req_id=%s "
+                    "attempt=%s error=%s",
+                    outbound.channel_id, req_id, attempt, type(exc).__name__)
+                # P2（G5）：**发送异常 = 结果未知**——帧可能已部分写出，
+                # 无法证明渠道未接受 ⇒ outcome_known=False ⇒ 落库为
+                # `delivery='unknown'` ⇒ **永不自动重投**（宁可漏投、不可重投）。
+                # ⚠️ `retryable` 取值**不变**（12.8.2 冻结语义未动）；
+                # 「能否重投」由 `outcome_known` 与状态共同裁决。
                 raise ChannelDeliveryFailedError(
                     channel_id=outbound.channel_id,
                     external_conversation_id=outbound.external_conversation_id,
                     retryable=True,
+                    outcome_known=False,
                 ) from exc
 
             if not slot.event.wait(self._ack_wait_timeout_s):
                 # 帧已写出但拿不到业务结果：未知是否送达 → transport 类失败。
+                # P0：登记「迟到 ACK 观测窗口」——让之后到达的同一 req_id 回执
+                # 能被识别为**迟到 ACK**并留痕（仅观测：不判定送达、不重投）。
+                waited_s = time.monotonic() - sent_at
+                self._registry.mark_ack_timeout(
+                    outbound.channel_id, req_id, waited_s=waited_s, attempt=attempt)
+                LOGGER.warning(
+                    "wecom bot delivery ack timeout: channel_id=%s req_id=%s "
+                    "attempt=%s waited_ms=%d ack_wait_s=%.3f outcome_known=%s",
+                    outbound.channel_id, req_id, attempt, int(waited_s * 1000),
+                    self._ack_wait_timeout_s, False)
                 raise ChannelDeliveryFailedError(
                     channel_id=outbound.channel_id,
                     external_conversation_id=outbound.external_conversation_id,
                     retryable=True,
+                    outcome_known=False,
                 )
 
+            waited_s = time.monotonic() - sent_at
             payload = slot.payload if isinstance(slot.payload, dict) else {}
             if payload.get("errcode") != 0:
                 # 应用层明确拒绝（req_id 过期 / 已消费 / 限频）→ 重试无意义。
+                LOGGER.warning(
+                    "wecom bot delivery rejected by channel: channel_id=%s "
+                    "req_id=%s attempt=%s errcode=%s errmsg=%r waited_ms=%d "
+                    "outcome_known=%s",
+                    outbound.channel_id, req_id, attempt, payload.get("errcode"),
+                    payload.get("errmsg"), int(waited_s * 1000), True)
                 raise ChannelDeliveryFailedError(
                     channel_id=outbound.channel_id,
                     external_conversation_id=outbound.external_conversation_id,
                     retryable=False,
                 )
+            LOGGER.info(
+                "wecom bot delivery ack ok: channel_id=%s req_id=%s attempt=%s "
+                "errcode=%s waited_ms=%d",
+                outbound.channel_id, req_id, attempt, payload.get("errcode"),
+                int(waited_s * 1000))
         finally:
             self._registry.forget_ack(outbound.channel_id, req_id)
 

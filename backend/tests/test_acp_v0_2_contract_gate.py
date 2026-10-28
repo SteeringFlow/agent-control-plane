@@ -45,6 +45,8 @@ INTERACTION_COLUMNS = {
     "id", "channel_id", "session_id", "direction", "external_interaction_id",
     "request_payload", "response_payload", "processing_status", "delivery_status",
     "failure_stage", "failure_code", "retryable", "processing_started_at",
+    # P2 Delivery Lifecycle：投递 attempt 计数 / 租约起点 / 协议世代
+    "delivery_attempts", "delivery_started_at", "delivery_protocol",
     "created_at", "updated_at", "tenant_id",  # Cloud-0.1.1-B 加性列
 }
 

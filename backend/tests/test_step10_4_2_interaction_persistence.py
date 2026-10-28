@@ -191,6 +191,10 @@ def test_a1_lifecycle_pending_to_processing_observable(db_engine) -> None:
                 session_mode=REUSE_ACTIVE, session_id=session.id,
                 agent_response=AgentResponse(content="echo"))
 
+        # P1 / C1：投递是**显式**的第 7 段（由应用层在结果落库后发起）
+        def deliver(self, outbound) -> None:
+            observed["delivered"] = True
+
     PersistingCoordinator(
         inner=_ProbingInner(), uow_factory=_uow_factory(db_engine),
     ).execute(_inbound(g["channel"]))

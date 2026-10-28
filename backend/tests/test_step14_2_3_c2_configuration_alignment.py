@@ -43,7 +43,7 @@ def _settings_field_names() -> set[str]:
 
 
 def test_env_example_aligned_with_settings_fields() -> None:
-    """.env.example 的键集合与 Settings 字段集合**完全一致**（9 == 9）。"""
+    """.env.example 的键集合与 Settings 字段集合**完全一致**（16 == 16）。"""
     keys = _env_example_keys()
     fields = _settings_field_names()
 
@@ -51,7 +51,7 @@ def test_env_example_aligned_with_settings_fields() -> None:
         f"配置模板与 Settings 字段面未对齐："
         f"模板多出={sorted(keys - fields)}，模板缺少={sorted(fields - keys)}"
     )
-    assert len(fields) == 9, f"Settings 字段面预期 9 个，实际 {len(fields)}"
+    assert len(fields) == 16, f"Settings 字段面预期 16 个，实际 {len(fields)}"
 
 
 # ---------------------------------------------------------------- 2. DATABASE_URL 统一

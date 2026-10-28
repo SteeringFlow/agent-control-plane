@@ -64,6 +64,7 @@ Resolver / Router / Dispatcher / DeliveryService 类。
 
 from typing import Protocol
 
+from app.domain import OutboundResponse
 from app.domain.inbound_interaction import InboundInteraction
 from app.domain.runtime_execution_result import RuntimeExecutionResult
 
@@ -98,19 +99,36 @@ class RuntimeExecutionCoordinator(Protocol):
     成功 → 返回 RuntimeExecutionResult（10.8.2 薄结果契约：session_mode /
     session_id / agent_response，10.8.1 A 裁决的三事实）；失败 → 原 typed
     exception 原样传播（**无结果对象**——异常通道本身就是执行事实通道）。
+
+    **P1 / C1：execute() 只覆盖前六段**；外部投递是**显式**的第 7 段
+    （`deliver`），由应用层在「Agent 成功结果已落库之后」发起——见
+    `deliver` 的说明。
     """
 
     def execute(self, inbound: InboundInteraction) -> RuntimeExecutionResult:
-        """按 `RUNTIME_EXECUTION_ORDER` 执行一次 Runtime 管线。
+        """按 `RUNTIME_EXECUTION_ORDER` 执行一次 Runtime 管线（**前六段**）。
 
         成功 → RuntimeExecutionResult（REUSE_ACTIVE → existing session.id /
         CREATE_NEW → newly created session.id；AgentResponse 直接进入 Result）。
 
         Fail Closed：
         - Identity / Routing / Session / Session Creation 任一失败 → STOP；
-        - 只有 AgentResponse 成功（Dispatch 成功）才进入 Delivery；
-          Dispatch 失败（Agent failed）→ NO Delivery / No Delivery；
-        - Delivery 失败 → processing 仍 SUCCESS、delivery = FAILED；
+        - 只有 AgentResponse 成功（Dispatch 成功）才产出 Result；
+          Dispatch 失败（Agent failed）→ NO Result / No Delivery；
         - 仅当 Session Resolution 给出 CREATE_NEW 才执行 Session Creation。
+
+        **P1 / C1**：本方法**不做外部投递**——投递由应用层在「Agent 成功结果
+        已持久化之后」经 `deliver()` 显式发起（否则投递失败会连带丢掉已生成的
+        结果：生产实证中该场景的响应快照恒为 NULL）。
+        """
+        ...
+
+    def deliver(self, outbound: OutboundResponse) -> None:
+        """执行一次外部投递（`RUNTIME_EXECUTION_ORDER` 的**第 7 段**，显式入口）。
+
+        由应用层在 Agent 成功结果落库之后调用；失败抛
+        `ChannelDeliveryFailedError`（processing 仍 SUCCESS、delivery = FAILED
+        的语义归持久化层，见 4.2/5.3）。本方法**不**重新选路、不重新解析
+        身份/会话（Delivery is transport, not routing）。
         """
         ...

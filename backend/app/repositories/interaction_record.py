@@ -70,6 +70,10 @@ class InteractionRecordRepository(Protocol):
         session_id: int | None = None,
         response_payload: dict | None = None,
         expected_started_at: datetime | None = None,
+        expected_processing_status: str | None = None,
+        expected_delivery_status: str | None = None,
+        expected_delivery_attempts: int | None = None,
+        delivery_protocol: int | None = None,
     ) -> OutcomeCommit:
         """终态一次性落定（12.9.4.12 起带 attempt fence，返回 OutcomeCommit）。
 
@@ -85,6 +89,79 @@ class InteractionRecordRepository(Protocol):
           作围栏——命中返回 `OutcomeCommit.COMMITTED`；失配返回
           `OutcomeCommit.REJECTED`（ownership lost，正常竞争结果，**不抛异常**；
           真实 DB 错误仍照常抛）。None = 未持围栏的既有形状（同步/种子路径）。
+        - **`expected_processing_status` / `expected_delivery_status`（P1 / C3）**：
+          围栏的**状态侧**条件，缺省行为与既有调用**逐字不变**
+          （`expected_processing_status` 缺省 = `'processing'`；
+          `expected_delivery_status` 缺省 = 不加该条件）。
+
+          它们的用途只有一个：让**投递终态**能被**带围栏**地单独落定——
+          投递终态发生时，`processing_status` 已经是 `'succeeded'`（Agent 已
+          成功），因此围栏的状态侧必须改为 `'succeeded'`，并且额外要求
+          `delivery_status = 'pending'`（投递终态**只落一次**）。
+
+          显式给出这两个条件，就不必为「投递终态」另开一个 Port 方法
+          （Port 的**方法面**是冻结的：10.4.2 / 10.5.3）。
+
+          **P2**：投递终态改由 `expected_delivery_attempts` 围栏——它同时
+          要求 `delivery_status='delivering'` 与 `delivery_attempts=我的
+          attempt 号`（**单调计数**，不用时间戳等式：SQLite 秒级精度会碰撞）。
+          给出该参数时，写入同时**清空** `delivery_started_at`（本次 attempt
+          已结束 ⇒ 租约释放 ⇒ 失败重投不必再等租约过期）。
+        - `delivery_protocol`：协议世代标记；非 None 时写入（1 = 新协议行，
+          其 `delivery_attempts=0` 才**可**被读作「从未尝试过投递」）。
+        """
+        ...
+
+    def claim_delivery(
+        self, interaction_id: int, *, max_attempts: int, lease_seconds: int,
+        include_failed: bool = False,
+    ) -> int | None:
+        """**原子**取得投递权（单条条件化 UPDATE；P2 Delivery Lifecycle）。
+
+        这是「首次投递」与「失败后重投」**共用**的唯一投递闸门：没有成功
+        claim，调用方**不得**发起任何外部投递。
+
+        条件（全部在同一条 UPDATE 内校验）：
+        - `id` + `tenant_id`（若该仓储已绑定租户）；
+        - `processing_status='succeeded'`（Agent 已成功）；
+        - `response_payload IS NOT NULL`（结果已持久化）；
+        - `delivery_protocol=1`（**协议世代**：历史行 `0` 一律不可 claim ⇒
+          永不自动重投）；
+        - `delivery_attempts < max_attempts`（总 attempt 上限）；
+        - `include_failed=False`（首次投递）：`delivery_status='pending'`
+          且 `delivery_attempts=0`（**可证明从未尝试过投递**）；
+        - `include_failed=True`（失败重投）：`delivery_status='failed'` 且
+          `retryable=true`（**结果已知**的未送达；`retryable` 单独**不**充分）
+          且租约已释放/过期。
+
+        同一语句写入：`delivery_status='delivering'`、
+        `delivery_attempts=delivery_attempts+1`、`delivery_started_at=DB now`。
+
+        返回：**本次 attempt 号**（= 更新后的 `delivery_attempts`，与 UPDATE
+        在同一事务内读回）；`None` = 未取得投递权（rowcount != 1）——调用方
+        **必须停止投递**（这是正常竞争结果，不抛异常）。
+        """
+        ...
+
+    def find_undelivered(self, limit: int = 10, *,
+                         max_attempts: int) -> list[InteractionRecord]:
+        """恢复候选（**纯读**：不 claim、不改行、不加锁）。
+
+        白名单（两条，**不含** `unknown` / `delivering` / `delivered`）：
+        - 首次投递：`protocol=1 AND delivery_status='pending' AND attempts=0`；
+        - 失败重投：`protocol=1 AND delivery_status='failed' AND retryable=true`
+          且 `attempts < max_attempts`。
+        """
+        ...
+
+    def reclaim_stale_delivery(self, threshold_seconds: int,
+                               limit: int = 100) -> int:
+        """回收**租约过期**的在途投递 → `delivery_status='unknown'`。
+
+        ⚠️ 回收**绝不**退回 `pending`：租约过期只说明「旧 attempt 失去数据库
+        写入资格」，**不**说明「消息未送达」——旧 attempt 可能仍在外部调用中、
+        甚至已经送达。退回 `pending` 会让恢复驱动重发 ⇒ 重复用户消息。
+        因此过期一律转 `unknown`（**永不自动重投**，转人工裁决）。
         """
         ...
 

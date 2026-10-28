@@ -94,6 +94,7 @@ class _AcpHandler(BaseHTTPRequestHandler):
 
 
 import pytest  # noqa: E402
+from tests.delivery_lifecycle_helper import DeliveringCoordinator
 
 
 @pytest.fixture()
@@ -176,7 +177,7 @@ def _seed(db_engine, agent_a_url: str, agent_b_url: str) -> dict[str, int]:
 
 def _coordinator(db_engine, channel_adapter) -> RuntimeCoordinator:
     uow = _uow_factory(db_engine)
-    return RuntimeCoordinator(
+    return DeliveringCoordinator(RuntimeCoordinator(
         identity_resolution=IdentityResolutionExecutor(uow),
         access_authorization=AccessAuthorizationExecutor(uow),
         routing=RoutingExecutor(uow),
@@ -185,7 +186,7 @@ def _coordinator(db_engine, channel_adapter) -> RuntimeCoordinator:
         agent_dispatch=AgentDispatchExecutor(
             agent_adapter=ACPAdapter(), uow_factory=uow),
         delivery=DeliveryExecutor(channel_adapter=channel_adapter),
-    )
+    ))
 
 
 def _inbound(channel_id: int, content: str, interaction: str,

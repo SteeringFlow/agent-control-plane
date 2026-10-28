@@ -360,11 +360,24 @@ class ChannelDeliveryFailedError(ApplicationError):
     底层失败（auth / protocol / transport / rate limited）一律**在此映射**，
     不新造 ChannelNotFound / ChannelAuthFailed / ChannelTimeout /
     ChannelRateLimited / ChannelTransportFailed。
+
+    **两个正交轴（P0 观测；不新增错误码、不改既有语义）**：
+
+    - `retryable`（既有，12.8.2）：**重投是否可能安全**——由**抛出点**裁决
+      （契约类失败 False；transport 类 True；企微明确拒绝 False）。
+    - `outcome_known`（P0 新增）：**我们是否知道送达结果**——默认 True = 明确知道
+      （未发出 / 被拒绝）；False = **结果未知**（典型：ACK 窗口内没等到回执——
+      帧已写出，企微可能已送达、也可能没有）。
+
+    两轴**互不推导**：`outcome_known=False` **不是**"可以安全重试"的依据
+    （未知恰恰意味着重投可能造成重复投递）；`retryable=True` 也**不**代表结果已知。
+    P0 只做观测：不引入任何重投机制、不据此改写既有 retryable 语义。
     """
 
     def __init__(self, channel_id: int | None = None,
                  external_conversation_id: str | None = None,
-                 *, retryable: bool = True) -> None:
+                 *, retryable: bool = True,
+                 outcome_known: bool = True) -> None:
         super().__init__(
             "Channel Delivery 失败（Fail Closed）："
             f"channel_id={channel_id}, external_conversation_id={external_conversation_id!r}"
@@ -375,6 +388,10 @@ class ChannelDeliveryFailedError(ApplicationError):
         # 官方定义为「每个 URL 只能调用一次」，其失败不可重试（retryable=False）。
         # 不新增错误码：只在既有 CHANNEL_DELIVERY_FAILED 上区分可重试性。
         self.retryable = retryable
+        # P0 观测：送达结果是否**已知**（默认 True ⇒ 既有全部抛出点语义不变）。
+        # 仅「ACK 窗口内未等到回执」一类抛出处显式置 False（结果未知：可能已送达、
+        # 也可能没有）。该属性**不是**重试信号——未知恰恰意味着重投可能重复投递。
+        self.outcome_known = outcome_known
 
 
 # 注意：这里**故意没有** DuplicateUserError。

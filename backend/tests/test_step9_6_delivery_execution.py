@@ -47,9 +47,17 @@ FORBIDDEN_ROOTS = (
 
 def _root_allowed(root: str) -> bool:
     # Delivery 只依赖 ChannelAdapter Port + 契约 + 错误——**不依赖任何 Repository/UoW**
+    # P1 / C1：出站信封构建（纯函数 `build_outbound_response`）落在本模块，
+    # 故新增两个 **domain 契约**依赖（AgentResponse / InboundInteraction）——
+    # 仍**不**引入任何 Repository / UoW / Adapter 实现。
     return (root == "app.repositories.channel_adapter"
             or root == "app.application.errors"
             or root == "app.domain.outbound_response"
+            or root == "app.domain.agent_response"
+            # P2.1：恢复路径要把已落库的 artifact 引用快照还原成领域对象
+            # （`Artifact` 值对象）——仍是**领域契约**，不引入 Repository/UoW。
+            or root == "app.domain.artifact"
+            or root == "app.domain.inbound_interaction"
             or root in {"collections", "dataclasses", "typing"})
 
 

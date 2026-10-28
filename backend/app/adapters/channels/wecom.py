@@ -99,6 +99,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from app.application.errors import ChannelDeliveryFailedError
 from app.domain.agent_probe_snapshot import AgentProbeSnapshot
+from app.domain.artifact_reference import render_outbound_content
 from app.domain.channel import Channel
 from app.domain.inbound_interaction import (
     CHAT_TYPE_METADATA_KEY,
@@ -585,10 +586,15 @@ class WeComAdapter:
         if not isinstance(outbound.content, str) or not outbound.content.strip():
             raise ChannelDeliveryFailedError(channel_id=outbound.channel_id)
 
+        # ACP V0.3 Phase 1：Agent 产出的成果**引用** → 出站消息呈现（引用式：
+        # 只呈现引用，不取回字节、不上传、不声称已送达）。无 artifact 时
+        # `content` **原样**（逐字节一致）⇒ 旧出站消息零变化。
+        content = render_outbound_content(outbound.content, outbound.artifacts)
+
         # ---- 智能机器人：response_url 优先（不读 Channel 出站凭据）----
         response_url = _response_url_from(outbound)
         if response_url is not None:
-            self._deliver_via_response_url(response_url, outbound)
+            self._deliver_via_response_url(response_url, outbound, content)
             return
 
         channel = self._load_channel_for_send(outbound.channel_id)
@@ -596,7 +602,7 @@ class WeComAdapter:
         touser = outbound.external_conversation_id  # 单聊裁决（10.2.1）：conversation = userid
         try:
             token = self._fetch_access_token(material)
-            self._send_text_message(material, token, touser, outbound.content)
+            self._send_text_message(material, token, touser, content)
         except ChannelDeliveryFailedError as exc:
             if exc.channel_id is None:  # 底层抛出未带上下文 → 在此补全（12.7）
                 raise ChannelDeliveryFailedError(
@@ -610,7 +616,9 @@ class WeComAdapter:
                 external_conversation_id=outbound.external_conversation_id,
             ) from exc
 
-    def _deliver_via_response_url(self, response_url: str, outbound: OutboundResponse) -> None:
+    def _deliver_via_response_url(
+        self, response_url: str, outbound: OutboundResponse, content: str
+    ) -> None:
         """POST response_url —— 智能机器人主动回复（官方 101138）。
 
         已确认事实（12.8.1）驱动的 wire：
@@ -636,7 +644,7 @@ class WeComAdapter:
         超时取 `DEFAULT_OUTBOUND_TIMEOUT_S`：本路径不读 Channel.config——
         智能机器人回复不依赖 corpsecret / agentid，读凭据反而会 Fail Closed。
         """
-        payload = compose_robot_reply_payload(outbound.content)
+        payload = compose_robot_reply_payload(content)
         req = urllib.request.Request(
             response_url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

@@ -48,6 +48,8 @@ def test_a1_interaction_columns_exactly_match_frozen_semantics() -> None:
         "processing_status", "delivery_status",
         "failure_stage", "failure_code", "retryable",
         "processing_started_at", "created_at", "updated_at", "tenant_id",
+    # P2 Delivery Lifecycle：投递 attempt 计数 / 租约起点 / 协议世代
+    "delivery_attempts", "delivery_started_at", "delivery_protocol",
     }
     # 双状态独立、可空语义正确
     assert not cols["processing_status"].nullable
